@@ -1,0 +1,2297 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>나의 여행 기록 (Travel Log & Diary)</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .swipe-container {
+      position: relative;
+      overflow: hidden;
+      touch-action: pan-y;
+    }
+    .swipe-content {
+      transition: transform 0.2s ease-out;
+      will-change: transform;
+    }
+    .draggable-spot {
+      cursor: grab;
+    }
+    .draggable-spot:active {
+      cursor: grabbing;
+      opacity: 0.6;
+    }
+  </style>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+  import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+  // Firebase Hosting 전용 자동 설정 로드
+  const response = await fetch('/__/firebase/init.json');
+  const firebaseConfig = await response.json();
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const provider = new GoogleAuthProvider();
+
+  window.FirebaseAPI = { auth, db, provider, signInWithPopup, signOut, onAuthStateChanged, doc, setDoc, onSnapshot };
+  window.dispatchEvent(new Event('firebase-ready'));
+</script>
+
+</head>
+<body class="bg-slate-100 text-slate-800">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function useLocalStorage(key, initialValue) {
+      const [storedValue, setStoredValue] = useState(() => {
+        try {
+          const item = window.localStorage.getItem(key);
+          return item ? JSON.parse(item) : initialValue;
+        } catch (error) {
+          console.error(`Error reading localStorage key "${key}":`, error);
+          return initialValue;
+        }
+      });
+
+      useEffect(() => {
+        try {
+          window.localStorage.setItem(key, JSON.stringify(storedValue));
+        } catch (error) {
+          console.error(`Error setting localStorage key "${key}":`, error);
+        }
+      }, [key, storedValue]);
+
+      return [storedValue, setStoredValue];
+    }
+
+    const FLAG_MAP = {
+      '일본': '🇯🇵', '도쿄': '🇯🇵', '오사카': '🇯🇵', '후쿠오카': '🇯🇵', '삿포로': '🇯🇵',
+      '프랑스': '🇫🇷', '파리': '🇫🇷',
+      '미국': '🇺🇸', '뉴욕': '🇺🇸', 'LA': '🇺🇸', '하와이': '🇺🇸',
+      '영국': '🇬🇧', '런던': '🇬🇧',
+      '이탈리아': '🇮🇹', '로마': '🇮🇹', '베네치아': '🇮🇹',
+      '스페인': '🇪🇸', '바르셀로나': '🇪🇸', '마드리드': '🇪🇸',
+      '태국': '🇹🇭', '방콕': '🇹🇭', '치앙마이': '🇹🇭',
+      '베트남': '🇻🇳', '다낭': '🇻🇳', '하노이': '🇻🇳', '나트랑': '🇻🇳',
+      '대만': '🇹🇼', '타이베이': '🇹🇼',
+      '중국': '🇨🇳', '상하이': '🇨🇳', '베이징': '🇨🇳',
+      '한국': '🇰🇷', '제주': '🇰🇷', '부산': '🇰🇷', '서울': '🇰🇷',
+      '독일': '🇩🇪', '스위스': '🇨🇭', '호주': '🇦🇺', '캐나다': '🇨🇦'
+    };
+
+    const getFlagFromText = (text) => {
+      if (!text) return '✈️';
+      for (const key in FLAG_MAP) {
+        if (text.includes(key)) return FLAG_MAP[key];
+      }
+      return '✈️';
+    };
+
+    const isYenCurrency = (currencyStr = '', countryName = '') => {
+      const target = (currencyStr + countryName).toUpperCase();
+      return target.includes('JPY') || target.includes('엔') || target.includes('YEN');
+    };
+
+    function SwipeableCard({ children, onEdit, onDelete, onClickContent }) {
+      const [translateX, setTranslateX] = useState(0);
+      const startX = useRef(0);
+      const currentX = useRef(0);
+      const isDragging = useRef(false);
+
+      const handleTouchStart = (e) => {
+        startX.current = e.touches ? e.touches[0].clientX : e.clientX;
+        isDragging.current = true;
+      };
+
+      const handleTouchMove = (e) => {
+        if (!isDragging.current) return;
+        currentX.current = e.touches ? e.touches[0].clientX : e.clientX;
+        const diff = currentX.current - startX.current;
+        if (Math.abs(diff) < 120) {
+          setTranslateX(diff);
+        }
+      };
+
+      const handleTouchEnd = () => {
+        if (!isDragging.current) return;
+        isDragging.current = false;
+        if (translateX > 70) {
+          onDelete();
+        } else if (translateX < -70) {
+          onEdit();
+        } else if (Math.abs(translateX) < 5 && onClickContent) {
+          onClickContent();
+        }
+        setTranslateX(0);
+      };
+
+      return (
+        <div 
+          className="swipe-container rounded-2xl overflow-hidden select-none"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onMouseDown={handleTouchStart}
+          onMouseMove={handleTouchMove}
+          onMouseUp={handleTouchEnd}
+          onMouseLeave={handleTouchEnd}
+        >
+          <div className="absolute inset-0 flex justify-between items-center px-4 font-bold text-xs text-white">
+            <div className="bg-red-500 h-full w-1/2 flex items-center justify-start pl-4">🗑️ 삭제</div>
+            <div className="bg-indigo-600 h-full w-1/2 flex items-center justify-end pr-4">✏️ 수정</div>
+          </div>
+
+          <div 
+            className="swipe-content bg-white p-3.5 relative z-10 border-b border-slate-100 last:border-none"
+            style={{ transform: `translateX(${translateX}px)` }}
+          >
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    function TravelApp() {
+      // Firebase 사용자 인증 상태
+      const [user, setUser] = useState(null);
+      const [fbReady, setFbReady] = useState(false);
+
+      // 여행 데이터 상태
+      const [countries, setCountries] = useLocalStorage('travel_app_countries', []);
+      const [selectedCountry, setSelectedCountry] = useState(null);
+      const [activeTab, setActiveTab] = useState('home');
+
+      const [showAddCountry, setShowAddCountry] = useState(false);
+      const [editingCountryId, setEditingCountryId] = useState(null);
+      const [newCountryInput, setNewCountryInput] = useState({ name: '', flag: '', currency: '', startDate: '', endDate: '', defaultRate: '' });
+
+      const [useDoubleEx, setUseDoubleEx] = useLocalStorage('travel_app_use_double_ex', false);
+      const [customBaseRate, setCustomBaseRate] = useState(900);
+      const [krwUsd, setKrwUsd] = useLocalStorage('travel_app_krw_usd', 1350);
+      const [usdLocal, setUsdLocal] = useLocalStorage('travel_app_usd_local', 150);
+
+      const [expenses, setExpenses] = useLocalStorage('travel_app_expenses', []);
+      const [showAddExpense, setShowAddExpense] = useState(false);
+      const [editingExpenseId, setEditingExpenseId] = useState(null);
+      const [newExpense, setNewExpense] = useState({ daySection: 'day_1', day: 1, title: '', amountLocal: '', customKrw: '', category: '식비', paymentMethod: '카드', cardName: '', receiptImage: '', isDoubleExchange: false });
+      const [viewReceiptModal, setViewReceiptModal] = useState(null);
+      const [uploadReceiptTargetId, setUploadReceiptTargetId] = useState(null);
+
+      const [itinerary, setItinerary] = useLocalStorage('travel_app_itinerary', []);
+      const [fullAddSpot, setFullAddSpot] = useState(null);
+      const [viewSpotDetail, setViewSpotDetail] = useState(null);
+      const [draggedSpotId, setDraggedSpotId] = useState(null);
+
+      const [diaries, setDiaries] = useLocalStorage('travel_app_diaries', []);
+      const [fullDiaryModal, setFullDiaryModal] = useState(null);
+      const [fullEditDiary, setFullEditDiary] = useState(null);
+
+      const [spots, setSpots] = useLocalStorage('travel_app_spots', []);
+      const [spotCategoryFilter, setSpotCategoryFilter] = useState('ALL');
+      const [spotSortOption, setSpotSortOption] = useState('ratingHigh');
+      const [fullRatingPage, setFullRatingPage] = useState(null);
+      const [rankShiftPopup, setRankShiftPopup] = useState(null);
+
+      const [showStatsModal, setShowStatsModal] = useState(false);
+      const [statsTab, setStatsTab] = useState('chart');
+
+      const [flights, setFlights] = useLocalStorage('travel_app_flights', []);
+      const [hotels, setHotels] = useLocalStorage('travel_app_hotels', []);
+      const [showAirtelModal, setShowAirtelModal] = useState(false);
+      const [showFlightModal, setShowFlightModal] = useState(false);
+      const [newFlight, setNewFlight] = useState({ departureDate: '', flightNo: '', arrivalDate: '', paymentPlatform: '', note: '' });
+      const [showHotelModal, setShowHotelModal] = useState(false);
+      const [newHotel, setNewHotel] = useState({ name: '', checkInDate: '', checkInTime: '15:00', checkOutDate: '', checkOutTime: '11:00', address: '', paymentPlatform: '', bookingNo: '', note: '' });
+
+      const [vouchers, setVouchers] = useLocalStorage('travel_app_vouchers', []);
+      const [showVoucherListModal, setShowVoucherListModal] = useState(false);
+      const [showVoucherModal, setShowVoucherModal] = useState(false);
+      const [editingVoucherId, setEditingVoucherId] = useState(null);
+      const [newVoucher, setNewVoucher] = useState({ title: '', fileName: '', fileData: '' });
+      const [previewVoucher, setPreviewVoucher] = useState(null);
+
+      const pressTimer = useRef(null);
+
+      const [tips, setTips] = useLocalStorage('travel_app_tips', []);
+      const [showTipListModal, setShowTipListModal] = useState(false);
+      const [showTipModal, setShowTipModal] = useState(false);
+      const [tipCategoryFilter, setTipCategoryFilter] = useState('전체');
+      const [newTip, setNewTip] = useState({ title: '', category: '교통', content: '', link: '', image: '' });
+
+      const [showWishModal, setShowWishModal] = useState(false);
+      const [wishCategoryTab, setWishCategoryTab] = useState('place');
+
+      // Firebase 연결 및 인증 상태 감지
+      useEffect(() => {
+        const initFB = () => {
+          if (window.FirebaseAPI) {
+            setFbReady(true);
+            const { auth, onAuthStateChanged } = window.FirebaseAPI;
+            onAuthStateChanged(auth, (currentUser) => {
+              setUser(currentUser);
+            });
+          }
+        };
+
+        if (window.FirebaseAPI) {
+          initFB();
+        } else {
+          window.addEventListener('firebase-ready', initFB);
+          return () => window.removeEventListener('firebase-ready', initFB);
+        }
+      }, []);
+
+      // 클라우드 데이터 실시간 동기화 (로그인 시)
+      useEffect(() => {
+        if (!user || !window.FirebaseAPI) return;
+        const { db, doc, onSnapshot } = window.FirebaseAPI;
+        const userDocRef = doc(db, 'users', user.uid);
+
+        const unsub = onSnapshot(userDocRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.countries) setCountries(data.countries);
+            if (data.expenses) setExpenses(data.expenses);
+            if (data.itinerary) setItinerary(data.itinerary);
+            if (data.diaries) setDiaries(data.diaries);
+            if (data.spots) setSpots(data.spots);
+            if (data.flights) setFlights(data.flights);
+            if (data.hotels) setHotels(data.hotels);
+            if (data.vouchers) setVouchers(data.vouchers);
+            if (data.tips) setTips(data.tips);
+          }
+        });
+
+        return () => unsub();
+      }, [user]);
+
+      // 데이터 변경 시 Firestore 저장 헬퍼
+      const syncToCloud = (updatedData) => {
+        if (!user || !window.FirebaseAPI) return;
+        const { db, doc, setDoc } = window.FirebaseAPI;
+        const userDocRef = doc(db, 'users', user.uid);
+        setDoc(userDocRef, updatedData, { merge: true }).catch(err => console.error("Cloud Save Error:", err));
+      };
+
+      // 구글 로그인 / 로그아웃
+      const handleGoogleLogin = async () => {
+        if (!window.FirebaseAPI) return;
+        const { auth, provider, signInWithPopup } = window.FirebaseAPI;
+        try {
+          await signInWithPopup(auth, provider);
+        } catch (err) {
+          console.error("Login Failed:", err);
+          alert("구글 로그인에 실패하였습니다.");
+        }
+      };
+
+      const handleGoogleLogout = async () => {
+        if (!window.FirebaseAPI) return;
+        const { auth, signOut } = window.FirebaseAPI;
+        try {
+          await signOut(auth);
+          setUser(null);
+        } catch (err) {
+          console.error("Logout Failed:", err);
+        }
+      };
+
+      const handleSelectCountry = (country) => {
+        setSelectedCountry(country);
+        setCustomBaseRate(country.defaultRate || (isYenCurrency(country.currency, country.name) ? 900 : 1350));
+        setActiveTab('home');
+      };
+
+      const calculateTotalDays = (startStr, endStr) => {
+        if (!startStr || !endStr) return 1;
+        const start = new Date(startStr);
+        const end = new Date(endStr);
+        const diffDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        return diffDays > 0 ? diffDays : 1;
+      };
+
+      const getDateForDay = (startDateStr, dayNum) => {
+        if (!startDateStr || !dayNum || dayNum <= 0) return '';
+        const d = new Date(startDateStr);
+        d.setDate(d.getDate() + (dayNum - 1));
+        return d.toISOString().slice(0, 10);
+      };
+
+      const calcKrw = (item) => {
+        if (item.customKrw) return Number(item.customKrw);
+        const isYen = isYenCurrency(selectedCountry?.currency, selectedCountry?.name);
+        const rateFactor = isYen ? (customBaseRate / 100) : customBaseRate;
+
+        if (useDoubleEx && item.isDoubleExchange) {
+          if (!usdLocal || usdLocal === 0) return 0;
+          return Math.round((Number(item.amountLocal || 0) / usdLocal) * krwUsd);
+        }
+        return Math.round(Number(item.amountLocal || 0) * (rateFactor || 0));
+      };
+
+      const calcPlannedKrw = (plannedLocal) => {
+        if (!plannedLocal) return 0;
+        const isYen = isYenCurrency(selectedCountry?.currency, selectedCountry?.name);
+        const rateFactor = isYen ? (customBaseRate / 100) : customBaseRate;
+        return Math.round(Number(plannedLocal) * rateFactor);
+      };
+
+      const getExpenseGroupSummary = (expenseList) => {
+        let totalKrw = 0;
+        let totalLocal = 0;
+        let hasEstimatedRate = false;
+
+        expenseList.forEach(item => {
+          totalKrw += calcKrw(item);
+          totalLocal += Number(item.amountLocal || 0);
+          if (!item.customKrw) {
+            hasEstimatedRate = true;
+          }
+        });
+
+        return { totalKrw, totalLocal, hasEstimatedRate };
+      };
+
+      const getCategoryExpenseStats = () => {
+        if (!selectedCountry) return { categoryTotals: [], grandTotal: 0, conicGradient: '' };
+        const currentExpenses = expenses.filter(e => e.countryId === selectedCountry.id);
+
+        const categoryMap = { '식비': 0, '교통': 0, '쇼핑': 0, '관광': 0, '기타': 0 };
+        let grandTotal = 0;
+
+        currentExpenses.forEach(exp => {
+          const amount = calcKrw(exp);
+          const cat = categoryMap[exp.category] !== undefined ? exp.category : '기타';
+          categoryMap[cat] += amount;
+          grandTotal += amount;
+        });
+
+        const colorMap = {
+          '식비': '#ef4444',
+          '교통': '#3b82f6',
+          '쇼핑': '#f59e0b',
+          '관광': '#10b981',
+          '기타': '#8b5cf6'
+        };
+
+        const categoryTotals = Object.keys(categoryMap).map(cat => ({
+          name: cat,
+          amount: categoryMap[cat],
+          color: colorMap[cat],
+          percent: grandTotal > 0 ? Math.round((categoryMap[cat] / grandTotal) * 100) : 0
+        })).filter(c => c.amount > 0).sort((a, b) => b.amount - a.amount);
+
+        let currentAngle = 0;
+        const gradientSegments = categoryTotals.map(c => {
+          const start = currentAngle;
+          const percentage = (c.amount / (grandTotal || 1)) * 100;
+          currentAngle += percentage;
+          return `${c.color} ${start}% ${currentAngle}%`;
+        });
+
+        const conicGradient = grandTotal > 0 
+          ? `conic-gradient(${gradientSegments.join(', ')})`
+          : `conic-gradient(#cbd5e1 0% 100%)`;
+
+        return { categoryTotals, grandTotal, conicGradient };
+      };
+
+      const handleCleanZeroInput = (rawVal, setter) => {
+        if (rawVal === '') {
+          setter('');
+          return;
+        }
+        const num = Number(rawVal);
+        setter(isNaN(num) ? '' : num);
+      };
+
+      const handleOpenEditCountry = (e, country) => {
+        e.stopPropagation();
+        setEditingCountryId(country.id);
+        setNewCountryInput({
+          name: country.name,
+          flag: country.flag,
+          currency: country.currency,
+          startDate: country.startDate,
+          endDate: country.endDate,
+          defaultRate: country.defaultRate
+        });
+        setShowAddCountry(true);
+      };
+
+      const handleCreateOrUpdateCountry = () => {
+        if (!newCountryInput.name || !newCountryInput.startDate || !newCountryInput.endDate) {
+          alert('여행지 이름과 시작/종료 날짜를 입력해 주세요!');
+          return;
+        }
+
+        const detectedFlag = newCountryInput.flag && newCountryInput.flag.trim().length > 0
+          ? newCountryInput.flag 
+          : getFlagFromText(newCountryInput.name);
+
+        const isYen = isYenCurrency(newCountryInput.currency, newCountryInput.name);
+        const defaultRateVal = newCountryInput.defaultRate ? Number(newCountryInput.defaultRate) : (isYen ? 900 : 1350);
+
+        let nextCountries = [];
+        if (editingCountryId) {
+          nextCountries = countries.map(c => c.id === editingCountryId ? {
+            ...c,
+            name: newCountryInput.name,
+            flag: detectedFlag,
+            currency: newCountryInput.currency || 'USD',
+            startDate: newCountryInput.startDate,
+            endDate: newCountryInput.endDate,
+            defaultRate: defaultRateVal
+          } : c);
+          setCountries(nextCountries);
+          if (selectedCountry?.id === editingCountryId) {
+            setSelectedCountry(nextCountries.find(c => c.id === editingCountryId));
+          }
+          setEditingCountryId(null);
+        } else {
+          nextCountries = [...countries, { 
+            ...newCountryInput, 
+            id: Date.now().toString(),
+            flag: detectedFlag,
+            currency: newCountryInput.currency || 'USD',
+            defaultRate: defaultRateVal
+          }];
+          setCountries(nextCountries);
+        }
+
+        syncToCloud({ countries: nextCountries });
+        setShowAddCountry(false);
+        setNewCountryInput({ name: '', flag: '', currency: '', startDate: '', endDate: '', defaultRate: '' });
+      };
+
+      const handleDeleteCountry = (e, countryId, countryName) => {
+        e.stopPropagation();
+        if (confirm(`'${countryName}' 여행 기록을 정말 삭제하시겠습니까?`)) {
+          const nextCountries = countries.filter(c => c.id !== countryId);
+          const nextExpenses = expenses.filter(ex => ex.countryId !== countryId);
+          const nextItinerary = itinerary.filter(it => it.countryId !== countryId);
+          const nextDiaries = diaries.filter(d => d.countryId !== countryId);
+          const nextSpots = spots.filter(s => s.countryId !== countryId);
+
+          setCountries(nextCountries);
+          setExpenses(nextExpenses);
+          setItinerary(nextItinerary);
+          setDiaries(nextDiaries);
+          setSpots(nextSpots);
+
+          syncToCloud({
+            countries: nextCountries,
+            expenses: nextExpenses,
+            itinerary: nextItinerary,
+            diaries: nextDiaries,
+            spots: nextSpots
+          });
+
+          if (selectedCountry?.id === countryId) setSelectedCountry(null);
+        }
+      };
+
+      const handleAddDay = () => {
+        if (!selectedCountry) return;
+        const currentEnd = new Date(selectedCountry.endDate);
+        currentEnd.setDate(currentEnd.getDate() + 1);
+        const newEndDateStr = currentEnd.toISOString().slice(0, 10);
+        const updated = { ...selectedCountry, endDate: newEndDateStr };
+        const nextCountries = countries.map(c => c.id === selectedCountry.id ? updated : c);
+        setCountries(nextCountries);
+        setSelectedCountry(updated);
+        syncToCloud({ countries: nextCountries });
+      };
+
+      const handleDeleteItinerarySpot = (spot) => {
+        const hasRating = spots.some(s => s.countryId === selectedCountry.id && s.name === spot.name);
+        let confirmMessage = `'${spot.name}' 장소를 동선에서 삭제하시겠습니까?`;
+        if (hasRating) {
+          confirmMessage = `'${spot.name}' 장소는 별점 평가가 작성되어 있습니다.\n별점 평가 내용도 함께 정말 삭제하시겠습니까?`;
+        }
+
+        if (confirm(confirmMessage)) {
+          const nextItinerary = itinerary.filter(i => i.id !== spot.id);
+          setItinerary(nextItinerary);
+          let nextSpots = spots;
+          if (hasRating) {
+            nextSpots = spots.filter(s => !(s.countryId === selectedCountry.id && s.name === spot.name));
+            setSpots(nextSpots);
+          }
+          syncToCloud({ itinerary: nextItinerary, spots: nextSpots });
+          if (viewSpotDetail?.id === spot.id) setViewSpotDetail(null);
+        }
+      };
+
+      const handleDropSpotToDay = (targetDay, targetSpotId = null) => {
+        if (!draggedSpotId) return;
+        const sourceSpot = itinerary.find(i => i.id === draggedSpotId);
+        if (!sourceSpot) return;
+
+        let updated = itinerary.map(item => item.id === draggedSpotId ? { ...item, day: targetDay } : item);
+
+        if (targetSpotId && targetSpotId !== draggedSpotId) {
+          const daySpots = updated.filter(i => i.countryId === selectedCountry.id && i.day === targetDay);
+          const draggedIdx = daySpots.findIndex(i => i.id === draggedSpotId);
+          const targetIdx = daySpots.findIndex(i => i.id === targetSpotId);
+
+          if (draggedIdx !== -1 && targetIdx !== -1) {
+            const reordered = [...daySpots];
+            const [removed] = reordered.splice(draggedIdx, 1);
+            reordered.splice(targetIdx, 0, removed);
+
+            const otherSpots = updated.filter(i => !(i.countryId === selectedCountry.id && i.day === targetDay));
+            updated = [...otherSpots, ...reordered];
+          }
+        }
+
+        setItinerary(updated);
+        syncToCloud({ itinerary: updated });
+        setDraggedSpotId(null);
+      };
+
+      const executeSpotItineraryUpdate = (spotData, targetDay) => {
+        const isItinerary = targetDay > 0;
+        let existingItem = itinerary.find(i => i.countryId === selectedCountry.id && (i.id === spotData.id || i.name === spotData.name));
+        let updatedItinerary = itinerary.filter(i => !(i.countryId === selectedCountry.id && (i.id === spotData.id || i.name === spotData.name)));
+
+        updatedItinerary.push({
+          ...(existingItem || {}),
+          ...spotData,
+          id: spotData.id || Date.now(),
+          countryId: selectedCountry.id,
+          day: targetDay,
+          inItinerary: isItinerary,
+          visited: isItinerary ? (existingItem?.visited || false) : false
+        });
+
+        setItinerary(updatedItinerary);
+        syncToCloud({ itinerary: updatedItinerary });
+        setFullAddSpot(null);
+      };
+
+      const handleToggleVisited = (spot) => {
+        const nextVisited = !spot.visited;
+        const nextItinerary = itinerary.map(item => item.id === spot.id ? { ...item, visited: nextVisited } : item);
+        setItinerary(nextItinerary);
+        syncToCloud({ itinerary: nextItinerary });
+
+        if (nextVisited) {
+          openFullRatingPage(spot.name, spot.address, spot.category);
+        }
+      };
+
+      const handleFileUpload = (e, callback) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onloadend = () => callback(file.name, reader.result);
+        reader.readAsDataURL(file);
+      };
+
+      const openGoogleMaps = (addressName) => {
+        if (!addressName) return;
+        window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressName)}`, '_blank');
+      };
+
+      const handleAddExpenseSubmit = () => {
+        if (!newExpense.title || (!newExpense.amountLocal && !newExpense.customKrw)) return;
+        const targetDay = newExpense.daySection && newExpense.daySection.startsWith('day_') 
+          ? Number(newExpense.daySection.replace('day_', '')) 
+          : 0;
+
+        let nextExpenses = [];
+        if (editingExpenseId) {
+          nextExpenses = expenses.map(e => e.id === editingExpenseId ? {
+            ...e,
+            daySection: newExpense.daySection || 'prep',
+            day: targetDay,
+            title: newExpense.title,
+            amountLocal: Number(newExpense.amountLocal || 0),
+            customKrw: newExpense.customKrw ? Number(newExpense.customKrw) : null,
+            category: newExpense.category,
+            paymentMethod: newExpense.paymentMethod || '현금',
+            cardName: newExpense.cardName || '',
+            receiptImage: newExpense.receiptImage || '',
+            isDoubleExchange: useDoubleEx ? newExpense.isDoubleExchange : false
+          } : e);
+          setExpenses(nextExpenses);
+          setEditingExpenseId(null);
+        } else {
+          nextExpenses = [...expenses, {
+            id: Date.now(),
+            countryId: selectedCountry.id,
+            daySection: newExpense.daySection || 'prep',
+            day: targetDay,
+            title: newExpense.title,
+            amountLocal: Number(newExpense.amountLocal || 0),
+            customKrw: newExpense.customKrw ? Number(newExpense.customKrw) : null,
+            category: newExpense.category,
+            paymentMethod: newExpense.paymentMethod || '현금',
+            cardName: newExpense.cardName || '',
+            receiptImage: newExpense.receiptImage || '',
+            isDoubleExchange: useDoubleEx ? newExpense.isDoubleExchange : false
+          }];
+          setExpenses(nextExpenses);
+        }
+
+        syncToCloud({ expenses: nextExpenses });
+        setShowAddExpense(false);
+      };
+
+      const handleEditExpense = (exp) => {
+        setEditingExpenseId(exp.id);
+        setNewExpense({
+          daySection: exp.daySection,
+          day: exp.day,
+          title: exp.title,
+          amountLocal: exp.amountLocal || '',
+          customKrw: exp.customKrw || '',
+          category: exp.category,
+          paymentMethod: exp.paymentMethod,
+          cardName: exp.cardName || '',
+          receiptImage: exp.receiptImage || '',
+          isDoubleExchange: exp.isDoubleExchange || false
+        });
+        setShowAddExpense(true);
+      };
+
+      const handleDeleteExpenseItem = (exp) => {
+        if (confirm(`'${exp.title}' 지출 내역을 삭제하시겠습니까?`)) {
+          const nextExpenses = expenses.filter(e => e.id !== exp.id);
+          setExpenses(nextExpenses);
+          syncToCloud({ expenses: nextExpenses });
+        }
+      };
+
+      const handleDeleteReceipt = (expId) => {
+        const nextExpenses = expenses.map(e => e.id === expId ? { ...e, receiptImage: '' } : e);
+        setExpenses(nextExpenses);
+        syncToCloud({ expenses: nextExpenses });
+      };
+
+      const handleDirectReceiptUpload = (expId, base64) => {
+        const nextExpenses = expenses.map(e => e.id === expId ? { ...e, receiptImage: base64 } : e);
+        setExpenses(nextExpenses);
+        syncToCloud({ expenses: nextExpenses });
+        setUploadReceiptTargetId(null);
+      };
+
+      const handleSaveVoucherSubmit = () => {
+        if (!newVoucher.title) return;
+        let nextVouchers = [];
+        if (editingVoucherId) {
+          nextVouchers = vouchers.map(v => v.id === editingVoucherId ? { ...v, ...newVoucher } : v);
+          setVouchers(nextVouchers);
+          setEditingVoucherId(null);
+        } else {
+          nextVouchers = [...vouchers, { ...newVoucher, id: Date.now(), countryId: selectedCountry.id }];
+          setVouchers(nextVouchers);
+        }
+        syncToCloud({ vouchers: nextVouchers });
+        setShowVoucherModal(false);
+        setNewVoucher({ title: '', fileName: '', fileData: '' });
+      };
+
+      const handleDeleteVoucher = (voucherId, title) => {
+        if (confirm(`'${title}' 서류를 삭제하시겠습니까?`)) {
+          const nextVouchers = vouchers.filter(v => v.id !== voucherId);
+          setVouchers(nextVouchers);
+          syncToCloud({ vouchers: nextVouchers });
+          if (previewVoucher?.id === voucherId) setPreviewVoucher(null);
+        }
+      };
+
+      const handleVoucherTouchStart = (v) => {
+        pressTimer.current = setTimeout(() => {
+          handleDeleteVoucher(v.id, v.title);
+        }, 700);
+      };
+
+      const handleVoucherTouchEnd = () => {
+        if (pressTimer.current) clearTimeout(pressTimer.current);
+      };
+
+      const handleOpenAddTipModal = () => {
+        const initialCategory = (tipCategoryFilter && tipCategoryFilter !== '전체') ? tipCategoryFilter : '교통';
+        setNewTip({ title: '', category: initialCategory, content: '', link: '', image: '' });
+        setShowTipModal(true);
+      };
+
+      const handleSaveDiarySubmit = () => {
+        if (!fullEditDiary || !fullEditDiary.title) {
+          alert('일기 제목을 입력해 주세요!');
+          return;
+        }
+
+        const existingSameDay = diaries.find(d => d.countryId === selectedCountry.id && d.day === fullEditDiary.day && d.id !== fullEditDiary.id);
+
+        let nextDiaries = [];
+        if (existingSameDay) {
+          alert(`기존에 Day ${fullEditDiary.day} 일기가 있습니다.\n기존 Day ${fullEditDiary.day} 하단에 등록됩니다.`);
+          
+          const mergedBlocks = [...existingSameDay.blocks, ...fullEditDiary.blocks];
+          nextDiaries = diaries.map(d => d.id === existingSameDay.id ? {
+            ...d,
+            title: d.title + ' / ' + fullEditDiary.title,
+            blocks: mergedBlocks
+          } : d);
+
+          setDiaries(nextDiaries);
+        } else {
+          const existingIndex = diaries.findIndex(d => d.countryId === selectedCountry.id && d.id === fullEditDiary.id);
+          if (existingIndex >= 0) {
+            nextDiaries = [...diaries];
+            nextDiaries[existingIndex] = fullEditDiary;
+            setDiaries(nextDiaries);
+          } else {
+            nextDiaries = [...diaries, fullEditDiary];
+            setDiaries(nextDiaries);
+          }
+        }
+
+        syncToCloud({ diaries: nextDiaries });
+        setFullEditDiary(null);
+      };
+
+      const handleAddDiaryBlock = () => {
+        if (!fullEditDiary) return;
+        setFullEditDiary({ ...fullEditDiary, blocks: [...fullEditDiary.blocks, { id: Date.now(), image: '', text: '' }] });
+      };
+
+      const handleUpdateDiaryBlock = (blockId, field, val) => {
+        setFullEditDiary({
+          ...fullEditDiary,
+          blocks: fullEditDiary.blocks.map(b => b.id === blockId ? { ...b, [field]: val } : b)
+        });
+      };
+
+      const handleMoveDiaryBlock = (index, dir) => {
+        const blocks = [...fullEditDiary.blocks];
+        if ((dir === -1 && index === 0) || (dir === 1 && index === blocks.length - 1)) return;
+        const temp = blocks[index];
+        blocks[index] = blocks[index + dir];
+        blocks[index + dir] = temp;
+        setFullEditDiary({ ...fullEditDiary, blocks });
+      };
+
+      const handleDeleteDiaryBlock = (blockId) => {
+        if (fullEditDiary.blocks.length <= 1) {
+          alert('최소 1개의 블록은 존재해야 합니다.');
+          return;
+        }
+        setFullEditDiary({ ...fullEditDiary, blocks: fullEditDiary.blocks.filter(b => b.id !== blockId) });
+      };
+
+      const openFullRatingPage = (name, address = '', defaultCat = '식당') => {
+        const existing = spots.find(s => s.countryId === selectedCountry?.id && s.name === name);
+        if (existing) {
+          setFullRatingPage({ ...existing, spotName: existing.name });
+        } else {
+          setFullRatingPage({ spotName: name, address: address || 'Google Maps 주소', category: defaultCat, rating: 5, rank: 0, review: '' });
+        }
+      };
+
+      const handleSaveRatingProcess = (forceShift = false) => {
+        const targetRank = fullRatingPage.rank;
+        const targetCategory = fullRatingPage.category;
+
+        if (targetRank > 0 && !forceShift) {
+          const existingRankItem = spots.find(s => s.countryId === selectedCountry.id && s.category === targetCategory && s.rank === targetRank && s.name !== fullRatingPage.spotName);
+          if (existingRankItem) {
+            setRankShiftPopup({ existingItem: existingRankItem, newRank: targetRank });
+            return;
+          }
+        }
+
+        let updatedSpots = spots.filter(s => !(s.countryId === selectedCountry.id && s.name === fullRatingPage.spotName));
+        if (targetRank > 0 && forceShift) {
+          updatedSpots = updatedSpots.map(s => {
+            if (s.countryId === selectedCountry.id && s.category === targetCategory && s.rank >= targetRank && s.rank < 3) {
+              return { ...s, rank: s.rank + 1 };
+            }
+            return s;
+          });
+        }
+
+        updatedSpots.push({
+          id: fullRatingPage.id || Date.now(),
+          countryId: selectedCountry.id,
+          name: fullRatingPage.spotName,
+          category: fullRatingPage.category,
+          rating: fullRatingPage.rating,
+          rank: targetRank,
+          review: fullRatingPage.review,
+          address: fullRatingPage.address
+        });
+
+        setSpots(updatedSpots);
+        syncToCloud({ spots: updatedSpots });
+        setFullRatingPage(null);
+        setRankShiftPopup(null);
+      };
+
+      const getFilteredAndSortedSpots = () => {
+        if (!selectedCountry) return [];
+        const countrySpots = spots.filter(s => s.countryId === selectedCountry.id);
+        
+        let res = spotCategoryFilter === 'ALL' ? countrySpots : countrySpots.filter(s => s.category === spotCategoryFilter);
+        
+        return [...res].sort((a, b) => {
+          if (spotSortOption === 'ratingHigh') return b.rating - a.rating;
+          if (spotSortOption === 'ratingLow') return a.rating - b.rating;
+          if (spotSortOption === 'topRank') return (b.rank || 0) - (a.rank || 0);
+          return b.id - a.id;
+        });
+      };
+
+      const getUnratedVisitedSpots = () => {
+        if (!selectedCountry) return [];
+        const visitedSpots = itinerary.filter(i => i.countryId === selectedCountry.id && i.visited);
+        const ratedSpotNames = spots.filter(s => s.countryId === selectedCountry.id).map(s => s.name);
+        return visitedSpots.filter(i => !ratedSpotNames.includes(i.name));
+      };
+
+      const countryExpenseSummary = selectedCountry ? getExpenseGroupSummary(expenses.filter(e => e.countryId === selectedCountry.id)) : { totalKrw: 0, totalLocal: 0, hasEstimatedRate: false };
+
+      const getCategoryBadgeIcon = (cat) => {
+        switch (cat) {
+          case '식당': return '🍽️';
+          case '관광지': return '🏛️';
+          case '카페': return '☕';
+          case '쇼핑': return '🛍️';
+          case '숙소': return '🏨';
+          default: return '📍';
+        }
+      };
+
+      const getDoubleEx100Value = () => {
+        if (!usdLocal || usdLocal === 0) return 0;
+        return Math.round((100 / usdLocal) * krwUsd);
+      };
+
+      const isYen = isYenCurrency(selectedCountry?.currency, selectedCountry?.name);
+
+      const availableItinerarySpotNames = selectedCountry 
+        ? itinerary.filter(i => i.countryId === selectedCountry.id).map(i => i.name)
+        : [];
+
+      const filteredSpotAutoComplete = newExpense.title && newExpense.title.trim().length > 0
+        ? availableItinerarySpotNames.filter(name => name.toLowerCase().includes(newExpense.title.toLowerCase()) && name !== newExpense.title)
+        : [];
+
+      const statsData = getCategoryExpenseStats();
+
+      return (
+        <div className="max-w-md mx-auto min-h-screen bg-slate-50 shadow-2xl flex flex-col font-sans relative pb-16">
+          
+          {/* ==================== 1. 홈 여행 목록 ==================== */}
+          {!selectedCountry ? (
+            <div className="flex-1 p-5 flex flex-col bg-slate-50">
+              <div className="bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-700 text-white p-6 rounded-3xl shadow-xl mb-6 relative overflow-hidden">
+                <div className="relative z-10 flex justify-between items-center">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-200 bg-white/10 px-2.5 py-1 rounded-full backdrop-blur-md">
+                      Travel Log & Diary
+                    </span>
+                    <h1 className="text-2xl font-black mt-2 tracking-tight">나의 여행 기록 ✈️</h1>
+                    <p className="text-xs text-indigo-100 mt-1">추억, 동선, 가계부를 한곳에서 만드세요</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setEditingCountryId(null);
+                      setNewCountryInput({ name: '', flag: '', currency: '', startDate: '', endDate: '', defaultRate: '' });
+                      setShowAddCountry(true);
+                    }}
+                    className="w-12 h-12 bg-white text-indigo-700 hover:bg-indigo-50 font-black text-2xl rounded-2xl shadow-lg transition flex items-center justify-center shrink-0 ml-2"
+                  >
+                    +
+                  </button>
+                </div>
+
+                {/* 구글 로그인 상태 표시 바 */}
+                <div className="mt-4 pt-3 border-t border-white/20 flex justify-between items-center text-xs">
+                  {user ? (
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-2 truncate">
+                        <img src={user.photoURL} className="w-6 h-6 rounded-full border border-white/40" />
+                        <span className="font-bold text-white text-[11px] truncate">{user.displayName || user.email}님 로그인 중</span>
+                      </div>
+                      <button onClick={handleGoogleLogout} className="bg-white/20 hover:bg-white/30 text-white text-[10px] px-2 py-1 rounded-lg font-bold shrink-0 ml-2">로그아웃</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-indigo-100 text-[11px]">☁️ 구글 로그인 시 클라우드 동기화 가능</span>
+                      <button onClick={handleGoogleLogin} className="bg-white text-indigo-700 hover:bg-indigo-50 text-[10px] px-2.5 py-1 rounded-lg font-extrabold shadow shrink-0">Google 로그인</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-3.5 flex-1">
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-xs font-black text-slate-400 uppercase tracking-wider">
+                    여행 목록 <span className="text-indigo-600 font-bold">({countries.length}개)</span>
+                  </span>
+                </div>
+                
+                {countries.length === 0 ? (
+                  <div className="bg-white p-8 rounded-3xl border border-dashed border-slate-300 text-center space-y-2">
+                    <span className="text-3xl block">🗺️</span>
+                    <div className="font-bold text-sm text-slate-700">등록된 여행이 없습니다.</div>
+                    <p className="text-xs text-slate-400">우측 상단 '+' 버튼을 눌러 첫 여행을 시작해보세요!</p>
+                  </div>
+                ) : (
+                  countries.sort((a,b) => new Date(b.startDate) - new Date(a.startDate)).map(c => {
+                    const summary = getExpenseGroupSummary(expenses.filter(e => e.countryId === c.id));
+                    const totalDays = calculateTotalDays(c.startDate, c.endDate);
+                    return (
+                      <div 
+                        key={c.id} 
+                        onClick={() => handleSelectCountry(c)}
+                        className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md cursor-pointer relative group"
+                      >
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-3.5">
+                            <span className="text-4xl bg-slate-50 p-2.5 rounded-2xl border">{c.flag || '✈️'}</span>
+                            <div>
+                              <h3 className="font-black text-slate-800 text-base">{c.name}</h3>
+                              <div className="text-xs font-semibold text-slate-500 mt-1">📅 {c.startDate} ~ {c.endDate} ({totalDays}일간)</div>
+                              <div className="text-xs font-bold text-emerald-600 mt-1">
+                                💵 총지출: {summary.hasEstimatedRate ? '≈ ' : ''}₩ {summary.totalKrw.toLocaleString()} 원 ({summary.totalLocal.toLocaleString()} {c.currency})
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <button 
+                              onClick={(e) => handleOpenEditCountry(e, c)}
+                              className="p-1.5 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-bold"
+                              title="여행 수정"
+                            >
+                              ✏️
+                            </button>
+                            <button 
+                              onClick={(e) => handleDeleteCountry(e, c.id, c.name)}
+                              className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg text-xs font-bold"
+                              title="여행 삭제"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {showAddCountry && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl p-6 w-full max-w-xs space-y-4 shadow-2xl">
+                    <h3 className="font-black text-lg text-slate-800 border-b pb-3">{editingCountryId ? '✏️ 여행 정보 수정' : '✈️ 새 여행 추가'}</h3>
+                    <div className="space-y-3 text-xs">
+                      <input type="text" placeholder="여행지 이름 (예: 일본-도쿄)" value={newCountryInput.name} onChange={e => setNewCountryInput({...newCountryInput, name: e.target.value})} className="w-full p-2.5 border rounded-xl font-bold bg-slate-50" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="text" placeholder="국기 (예: 🇯🇵)" value={newCountryInput.flag} onChange={e => setNewCountryInput({...newCountryInput, flag: e.target.value})} className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-center" />
+                        <input type="text" placeholder="통화 (예: JPY)" value={newCountryInput.currency} onChange={e => setNewCountryInput({...newCountryInput, currency: e.target.value})} className="w-full p-2.5 border rounded-xl font-bold bg-slate-50 text-center" />
+                      </div>
+                      <input 
+                        type="number" 
+                        placeholder={isYenCurrency(newCountryInput.currency, newCountryInput.name) ? "기본 환율 (100엔당 원화)" : "기본 환율 (1외화당 원화)"} 
+                        value={newCountryInput.defaultRate} 
+                        onChange={e => setNewCountryInput({...newCountryInput, defaultRate: e.target.value})} 
+                        className="w-full p-2.5 border rounded-xl font-bold bg-slate-50" 
+                      />
+                      <div className="flex gap-2">
+                        <input type="date" value={newCountryInput.startDate} onChange={e => setNewCountryInput({...newCountryInput, startDate: e.target.value})} className="w-1/2 p-2 border rounded-xl text-[11px] font-bold" />
+                        <input type="date" value={newCountryInput.endDate} onChange={e => setNewCountryInput({...newCountryInput, endDate: e.target.value})} className="w-1/2 p-2 border rounded-xl text-[11px] font-bold" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-2">
+                      <button onClick={() => setShowAddCountry(false)} className="flex-1 py-3 bg-slate-100 rounded-xl text-xs font-bold">취소</button>
+                      <button onClick={handleCreateOrUpdateCountry} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl text-xs font-bold">{editingCountryId ? '수정 완료' : '등록'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+
+            /* ==================== 2. 여행 상세 대시보드 ==================== */
+            <div className="flex-1 flex flex-col h-full">
+              {/* 상단 헤더 */}
+              <header className="bg-indigo-600 text-white p-3.5 flex justify-between items-center shadow sticky top-0 z-20">
+                <button onClick={() => setSelectedCountry(null)} className="text-xs bg-white/20 px-2.5 py-1.5 rounded-lg font-bold">🏠 목록으로</button>
+                <div className="text-center">
+                  <div className="font-black text-sm flex items-center justify-center gap-1">
+                    <span>{selectedCountry.flag}</span>
+                    <span>{selectedCountry.name}</span>
+                  </div>
+                  <div className="text-[10px] text-indigo-200 font-bold">
+                    📅 {selectedCountry.startDate} ~ {selectedCountry.endDate}
+                  </div>
+                </div>
+                <span className="text-xs bg-indigo-800 px-2.5 py-1 rounded-md font-bold">
+                  {calculateTotalDays(selectedCountry.startDate, selectedCountry.endDate)}일 코스
+                </span>
+              </header>
+
+              <main className="flex-1 p-4 overflow-y-auto pb-16">
+                
+                {/* 🏠 [1] 메인 대시보드 */}
+                {activeTab === 'home' && (
+                  <div className="space-y-4">
+                    <div className="bg-white p-3.5 rounded-2xl border shadow-sm grid grid-cols-5 gap-2 text-center">
+                      <button onClick={() => setShowAirtelModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50 transition">
+                        <span className="text-2xl">🛫</span>
+                        <span className="text-[10px] font-bold mt-1 text-slate-700">에어텔</span>
+                      </button>
+                      <button onClick={() => setShowVoucherListModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50 transition">
+                        <span className="text-2xl">📄</span>
+                        <span className="text-[10px] font-bold mt-1 text-slate-700">서류함</span>
+                      </button>
+                      <button onClick={() => setShowTipListModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50 transition">
+                        <span className="text-2xl">💡</span>
+                        <span className="text-[10px] font-bold mt-1 text-slate-700">여행 팁</span>
+                      </button>
+                      <button onClick={() => setShowWishModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50 transition">
+                        <span className="text-2xl">✨</span>
+                        <span className="text-[10px] font-bold mt-1 text-slate-700">위시</span>
+                      </button>
+                      <button onClick={() => setShowStatsModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50 transition">
+                        <span className="text-2xl">📊</span>
+                        <span className="text-[10px] font-bold mt-1 text-slate-700">통계</span>
+                      </button>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-5 rounded-2xl shadow-lg space-y-2">
+                      <div className="flex justify-between items-center text-xs opacity-90">
+                        <span>💰 총 지출 현황</span>
+                        <button onClick={() => setActiveTab('expenses')} className="bg-white/20 px-2 py-0.5 rounded text-[10px] font-bold">가계부 상세 ➔</button>
+                      </div>
+                      <div className="text-2xl font-black">
+                        {countryExpenseSummary.hasEstimatedRate ? '≈ ' : ''}₩ {countryExpenseSummary.totalKrw.toLocaleString()} 원
+                      </div>
+                      <div className="text-xs text-emerald-100 font-bold">
+                        ({countryExpenseSummary.totalLocal.toLocaleString()} {selectedCountry.currency})
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-2xl border shadow-sm space-y-3">
+                      <div className="flex justify-between items-center border-b pb-2">
+                        <h3 className="font-black text-sm text-slate-800 flex items-center gap-1">🛫 에어텔 요약</h3>
+                        <button onClick={() => setShowAirtelModal(true)} className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">전체 보기 & 관리 ➔</button>
+                      </div>
+
+                      <div className="space-y-2 text-xs">
+                        {flights.filter(f => f.countryId === selectedCountry.id).length === 0 && hotels.filter(h => h.countryId === selectedCountry.id).length === 0 ? (
+                          <div className="text-xs text-slate-400 py-2 text-center">등록된 에어텔 정보가 없습니다.</div>
+                        ) : (
+                          <>
+                            {flights.filter(f => f.countryId === selectedCountry.id).slice(0, 2).map(f => (
+                              <div key={f.id} className="bg-slate-50 p-2.5 rounded-xl border space-y-1">
+                                <div className="flex justify-between items-center">
+                                  <span className="font-bold text-indigo-700">✈️ {f.flightNo}</span>
+                                  <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded font-bold">{f.departureDate}</span>
+                                </div>
+                                <div className="text-[11px] text-slate-600">{f.note}</div>
+                              </div>
+                            ))}
+
+                            {hotels.filter(h => h.countryId === selectedCountry.id).slice(0, 2).map(h => (
+                              <div key={h.id} className="bg-slate-50 p-2.5 rounded-xl border space-y-1">
+                                <div className="flex justify-between items-center">
+                                  <span className="font-bold text-slate-800">🏨 {h.name}</span>
+                                  <button onClick={() => openGoogleMaps(h.address || h.name)} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded font-bold hover:bg-indigo-100">
+                                    📍 지도
+                                  </button>
+                                </div>
+                                <div className="text-[10px] text-slate-500">📅 {h.checkInDate} ~ {h.checkOutDate} (체크인: {h.checkInTime})</div>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 📍 [2] 동선 뷰어 */}
+                {activeTab === 'itinerary' && (
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-black text-slate-700">📍 전체 일차 연속 동선 (Day 1 ~ Day N)</span>
+                      <button onClick={handleAddDay} className="text-xs bg-indigo-50 text-indigo-600 px-2.5 py-1.5 rounded-lg font-bold border border-indigo-200 whitespace-nowrap">+ 일차 추가</button>
+                    </div>
+
+                    <div className="space-y-6">
+                      {Array.from({ length: calculateTotalDays(selectedCountry.startDate, selectedCountry.endDate) }, (_, i) => i + 1).map(dayNum => {
+                        const daySpots = itinerary.filter(i => i.countryId === selectedCountry.id && i.day === dayNum && i.inItinerary);
+
+                        return (
+                          <div 
+                            key={dayNum} 
+                            onDragOver={e => e.preventDefault()}
+                            onDrop={() => handleDropSpotToDay(dayNum)}
+                            className="bg-white rounded-2xl border p-4 shadow-sm space-y-3 transition-colors duration-150"
+                          >
+                            <div className="flex justify-between items-center border-b pb-2">
+                              <span className="font-black text-sm text-indigo-600">Day {dayNum} ({getDateForDay(selectedCountry.startDate, dayNum)})</span>
+                              <button onClick={() => setFullAddSpot({ day: dayNum, enableTime: false, hour: '12', minute: '00', name: '', address: '', category: '식당', plannedBudget: '', menuMemo: '', blogUrl: '', image: '', menuImage: '', inItinerary: true, wishType: 'place', purchasePlace: '' })} className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-200">
+                                + 장소 추가
+                              </button>
+                            </div>
+
+                            <div className="relative pl-4 border-l-2 border-indigo-200 ml-2 space-y-3 pt-1 min-h-[40px]">
+                              {daySpots.length === 0 ? (
+                                <div className="text-xs text-slate-300 py-2">등록된 동선이 없습니다.</div>
+                              ) : (
+                                daySpots.map((spot) => {
+                                  const plannedKrw = calcPlannedKrw(spot.plannedBudget);
+                                  return (
+                                    <div 
+                                      key={spot.id}
+                                      draggable
+                                      onDragStart={() => setDraggedSpotId(spot.id)}
+                                      onDragOver={e => e.preventDefault()}
+                                      onDrop={(e) => { e.stopPropagation(); handleDropSpotToDay(dayNum, spot.id); }}
+                                      className="draggable-spot"
+                                    >
+                                      <SwipeableCard
+                                        onEdit={() => setFullAddSpot(spot)}
+                                        onDelete={() => handleDeleteItinerarySpot(spot)}
+                                        onClickContent={() => setViewSpotDetail(spot)}
+                                      >
+                                        <div className="space-y-1.5">
+                                          <div className="flex justify-between items-center">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <span className="text-[10px] font-extrabold bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded">
+                                                {getCategoryBadgeIcon(spot.category)} {spot.category || '장소'}
+                                              </span>
+                                              <span className={`font-bold text-xs ${spot.visited ? 'line-through text-slate-400' : 'text-slate-800'}`}>
+                                                {spot.name}
+                                              </span>
+                                              
+                                              <button 
+                                                onClick={(e) => { 
+                                                  e.stopPropagation(); 
+                                                  openFullRatingPage(spot.name, spot.address, spot.category); 
+                                                }} 
+                                                className="text-amber-500 font-bold text-xs px-1 hover:scale-125 transition"
+                                                title="별점 작성하기"
+                                              >
+                                                ★
+                                              </button>
+                                            </div>
+
+                                            <div className="flex items-center gap-1">
+                                              {spot.enableTime && spot.hour && (
+                                                <span className="text-[9px] font-bold bg-slate-700 text-slate-100 px-1.5 py-0.5 rounded">⏰ {spot.hour}:{spot.minute || '00'}</span>
+                                              )}
+                                              <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer bg-white px-1.5 py-0.5 rounded border" onClick={e => e.stopPropagation()}>
+                                                <input type="checkbox" checked={spot.visited} onChange={() => handleToggleVisited(spot)} className="rounded text-indigo-600" />
+                                                방문
+                                              </label>
+                                            </div>
+                                          </div>
+
+                                          {spot.plannedBudget && (
+                                            <div className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md inline-block">
+                                              💸 예상: ₩ {plannedKrw.toLocaleString()} 원 ({spot.plannedBudget} {selectedCountry.currency})
+                                            </div>
+                                          )}
+
+                                          {spot.menuMemo && <div className="text-[10px] text-slate-600 bg-white p-1.5 rounded border truncate">📝 {spot.menuMemo}</div>}
+                                        </div>
+                                      </SwipeableCard>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 💰 [3] 가계부 */}
+                {activeTab === 'expenses' && (
+                  <div className="space-y-4">
+                    <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-5 rounded-3xl shadow-md">
+                      <div className="text-xs opacity-80 font-bold">여행 전체 지출 합계</div>
+                      <div className="text-2xl font-black mt-1">
+                        {countryExpenseSummary.hasEstimatedRate ? '≈ ' : ''}₩ {countryExpenseSummary.totalKrw.toLocaleString()} 원
+                      </div>
+                      <div className="text-xs text-emerald-100 font-semibold mt-0.5">
+                        ({countryExpenseSummary.totalLocal.toLocaleString()} {selectedCountry.currency})
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-2xl shadow-sm text-xs space-y-2.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-black text-slate-800">⚙️ 환율 옵션 설정</span>
+                        <label className="flex items-center gap-1.5 text-slate-600 font-bold cursor-pointer">
+                          <input type="checkbox" checked={useDoubleEx} onChange={e => setUseDoubleEx(e.target.checked)} className="rounded text-indigo-600" />
+                          <span>이중환전 계산 모드</span>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl">
+                        <span className="font-bold text-slate-700">
+                          기본 환율 ({isYen ? `100 ${selectedCountry.currency}` : `1 ${selectedCountry.currency}`} 당 원화):
+                        </span>
+                        <input type="number" value={customBaseRate || ''} onChange={e => handleCleanZeroInput(e.target.value, setCustomBaseRate)} className="w-20 p-1 rounded-lg text-right font-black text-emerald-700 bg-white border-0 shadow-sm focus:ring-2 focus:ring-emerald-500" />
+                      </div>
+
+                      {useDoubleEx && (
+                        <div className="space-y-2 pt-1 border-t border-slate-100">
+                          <div className="bg-amber-50/70 p-2.5 rounded-xl text-amber-900 font-bold text-[11px]">
+                            💡 이중환전 기준 100 {selectedCountry.currency} ≈ ₩ {getDoubleEx100Value().toLocaleString()} 원 (실제 적용가치)
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-slate-400 block font-bold">원-달러 (KRW/USD)</label>
+                              <input type="number" value={krwUsd || ''} onChange={e => handleCleanZeroInput(e.target.value, setKrwUsd)} className="w-full p-2 rounded-xl font-bold bg-slate-50 border-0" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-400 block font-bold">달러-현지화폐 (USD/{selectedCountry.currency})</label>
+                              <input type="number" value={usdLocal || ''} onChange={e => handleCleanZeroInput(e.target.value, setUsdLocal)} className="w-full p-2 rounded-xl font-bold bg-slate-50 border-0" />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {showAddExpense && (
+                      <div className="bg-white p-4 rounded-3xl shadow-lg space-y-3 text-xs relative border-2 border-emerald-500">
+                        <div className="font-black text-sm text-slate-900 border-b pb-2">{editingExpenseId ? '✏️ 지출 내역 수정' : '💵 새 지출 등록'}</div>
+                        
+                        <div className="relative">
+                          <input 
+                            type="text" 
+                            placeholder="지출 항목명 (예: 이치란 라멘)" 
+                            value={newExpense.title} 
+                            onChange={e => setNewExpense({...newExpense, title: e.target.value})} 
+                            className="w-full p-2.5 rounded-xl bg-slate-50 font-bold border-0 focus:ring-2 focus:ring-indigo-500" 
+                          />
+                          {filteredSpotAutoComplete.length > 0 && (
+                            <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl z-30 max-h-32 overflow-y-auto divide-y">
+                              {filteredSpotAutoComplete.map((spotName, idx) => (
+                                <div 
+                                  key={idx} 
+                                  onClick={() => setNewExpense({...newExpense, title: spotName})}
+                                  className="p-2.5 text-xs font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer flex items-center justify-between"
+                                >
+                                  <span>📍 {spotName}</span>
+                                  <span className="text-[10px] text-slate-400 font-normal">동선 장소 연동</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <select value={newExpense.category} onChange={e => setNewExpense({...newExpense, category: e.target.value})} className="p-2.5 rounded-xl bg-slate-50 font-bold w-1/3 border-0">
+                            <option value="식비">🍽️ 식비</option><option value="교통">🚊 교통</option><option value="쇼핑">🛍️ 쇼핑</option><option value="관광">🏛️ 관광</option><option value="기타">📌 기타</option>
+                          </select>
+                          <input type="number" placeholder={`금액 (${selectedCountry.currency})`} value={newExpense.amountLocal} onChange={e => handleCleanZeroInput(e.target.value, (val) => setNewExpense({...newExpense, amountLocal: val}))} className="p-2.5 rounded-xl bg-slate-50 w-2/3 border-0 font-bold" />
+                        </div>
+
+                        {useDoubleEx && (
+                          <label className="flex items-center gap-2 p-2.5 bg-indigo-50 rounded-xl font-bold text-indigo-700 cursor-pointer">
+                            <input type="checkbox" checked={newExpense.isDoubleExchange} onChange={e => setNewExpense({...newExpense, isDoubleExchange: e.target.checked})} className="rounded text-indigo-600" />
+                            <span>💱 이 지출은 이중환전(USD 기반)으로 계산</span>
+                          </label>
+                        )}
+
+                        <input type="number" placeholder="💳 실제 카드 결제 원화 금액 (KRW - 생략시 환율 계산)" value={newExpense.customKrw} onChange={e => handleCleanZeroInput(e.target.value, (val) => setNewExpense({...newExpense, customKrw: val}))} className="w-full p-2.5 rounded-xl bg-slate-50 font-bold text-emerald-700 border-0" />
+
+                        <div className="flex gap-2">
+                          <select value={newExpense.paymentMethod} onChange={e => setNewExpense({...newExpense, paymentMethod: e.target.value})} className="p-2.5 rounded-xl bg-slate-50 font-bold w-1/3 border-0">
+                            <option value="카드">💳 카드</option><option value="현금">💵 현금</option><option value="페이">🟡 페이</option>
+                          </select>
+                          <input 
+                            type="text" 
+                            placeholder={newExpense.paymentMethod === '페이' ? "페이 종류 (예: GLN, 카카오페이)" : "카드사/카드명 (예: 트래블월렛)"} 
+                            value={newExpense.cardName} 
+                            onChange={e => setNewExpense({...newExpense, cardName: e.target.value})} 
+                            className="p-2.5 rounded-xl bg-slate-50 w-2/3 border-0" 
+                          />
+                        </div>
+
+                        <div className="space-y-1 pt-1">
+                          <label className="font-bold text-slate-600 block text-[11px]">🧾 영수증 이미지 첨부</label>
+                          <input type="file" accept="image/*" onChange={e => handleFileUpload(e, (name, base64) => setNewExpense({...newExpense, receiptImage: base64}))} className="w-full text-xs p-1.5 rounded-xl bg-slate-50 border-0" />
+                          {newExpense.receiptImage && (
+                            <div className="flex items-center gap-2 mt-1.5">
+                              <img src={newExpense.receiptImage} className="h-16 w-16 object-cover rounded-xl shadow-sm" />
+                              <button onClick={() => setNewExpense({...newExpense, receiptImage: ''})} className="px-2.5 py-1 bg-red-50 text-red-500 rounded-lg text-xs font-bold">영수증 삭제</button>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex gap-2 pt-2">
+                          <button onClick={() => setShowAddExpense(false)} className="flex-1 py-2.5 bg-slate-100 rounded-xl font-bold">취소</button>
+                          <button onClick={handleAddExpenseSubmit} className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl font-bold shadow-md">저장</button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-3.5">
+                      {(() => {
+                        const prepExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === 'prep' || e.day === 0));
+                        const prepSummary = getExpenseGroupSummary(prepExpenses);
+                        return (
+                          <div className="bg-white rounded-3xl shadow-sm overflow-hidden">
+                            <div className="bg-indigo-50/70 p-3.5 flex justify-between items-center">
+                              <div>
+                                <span className="font-black text-xs text-indigo-900">✈️ 여행준비 지출</span>
+                                <span className="text-[10px] text-indigo-600 font-bold ml-2">
+                                  소계: ₩ {prepSummary.totalKrw.toLocaleString()} 원 ({prepSummary.totalLocal.toLocaleString()} {selectedCountry.currency})
+                                </span>
+                              </div>
+                              <button onClick={() => { setEditingExpenseId(null); setNewExpense({ daySection: 'prep', day: 0, title: '', amountLocal: '', customKrw: '', category: '기타', paymentMethod: '카드', cardName: '', receiptImage: '', isDoubleExchange: false }); setShowAddExpense(true); }} className="text-[11px] font-bold text-indigo-600 bg-white px-2.5 py-1 rounded-xl shadow-sm">
+                                + 추가
+                              </button>
+                            </div>
+                            <div>
+                              {prepExpenses.map(exp => (
+                                <SwipeableCard 
+                                  key={exp.id} 
+                                  onEdit={() => handleEditExpense(exp)} 
+                                  onDelete={() => handleDeleteExpenseItem(exp)}
+                                >
+                                  <div className="flex justify-between items-center text-xs">
+                                    <div>
+                                      <div className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                                        <span>{exp.title}</span>
+                                        {exp.receiptImage ? (
+                                          <button onClick={(e) => { e.stopPropagation(); setViewReceiptModal(exp); }} title="영수증 관리" className="text-sm hover:scale-125 transition">🧾</button>
+                                        ) : (
+                                          <button onClick={(e) => { e.stopPropagation(); setUploadReceiptTargetId(exp.id); }} title="영수증 사진 첨부하기" className="text-sm opacity-30 hover:opacity-100 transition">🧾</button>
+                                        )}
+                                      </div>
+                                      <div className="text-slate-400 text-[10px] mt-0.5">
+                                        {exp.category} · <span className="text-indigo-600 font-bold">{exp.paymentMethod}{exp.cardName ? `(${exp.cardName})` : ''}</span>
+                                      </div>
+                                    </div>
+                                    <div className="text-right font-black text-slate-900">
+                                      ₩ {calcKrw(exp).toLocaleString()} 원
+                                    </div>
+                                  </div>
+                                </SwipeableCard>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {Array.from({ length: calculateTotalDays(selectedCountry.startDate, selectedCountry.endDate) }, (_, i) => i + 1).map(dayNum => {
+                        const dayExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === `day_${dayNum}` || e.day === dayNum));
+                        const daySummary = getExpenseGroupSummary(dayExpenses);
+
+                        return (
+                          <div key={dayNum} className="bg-white rounded-3xl shadow-sm overflow-hidden">
+                            <div className="bg-slate-100/70 p-3.5 flex justify-between items-center">
+                              <div>
+                                <span className="font-black text-xs text-slate-800">Day {dayNum} ({getDateForDay(selectedCountry.startDate, dayNum)})</span>
+                                <span className="text-[10px] text-slate-500 font-bold ml-2">
+                                  소계: ₩ {daySummary.totalKrw.toLocaleString()} 원 ({daySummary.totalLocal.toLocaleString()} {selectedCountry.currency})
+                                </span>
+                              </div>
+                              <button onClick={() => { setEditingExpenseId(null); setNewExpense({ daySection: `day_${dayNum}`, day: dayNum, title: '', amountLocal: '', customKrw: '', category: '식비', paymentMethod: '카드', cardName: '', receiptImage: '', isDoubleExchange: false }); setShowAddExpense(true); }} className="text-[11px] font-bold text-emerald-600 bg-white px-2.5 py-1 rounded-xl shadow-sm">
+                                + 추가
+                              </button>
+                            </div>
+
+                            <div>
+                              {dayExpenses.length === 0 ? (
+                                <div className="p-4 text-xs text-slate-300 text-center font-medium">등록된 지출이 없습니다.</div>
+                              ) : (
+                                dayExpenses.map(exp => (
+                                  <SwipeableCard 
+                                    key={exp.id} 
+                                    onEdit={() => handleEditExpense(exp)} 
+                                    onDelete={() => handleDeleteExpenseItem(exp)}
+                                  >
+                                    <div className="flex justify-between items-center text-xs">
+                                      <div>
+                                        <div className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                                          <span>{exp.title}</span>
+                                          {exp.receiptImage ? (
+                                            <button onClick={(e) => { e.stopPropagation(); setViewReceiptModal(exp); }} title="영수증 관리" className="text-sm hover:scale-125 transition">🧾</button>
+                                          ) : (
+                                            <button onClick={(e) => { e.stopPropagation(); setUploadReceiptTargetId(exp.id); }} title="영수증 사진 첨부하기" className="text-sm opacity-30 hover:opacity-100 transition">🧾</button>
+                                          )}
+                                        </div>
+                                        <div className="text-slate-400 text-[10px] mt-0.5">
+                                          {exp.category} · <span className="text-indigo-600 font-bold">{exp.paymentMethod}{exp.cardName ? `(${exp.cardName})` : ''}</span>
+                                        </div>
+                                      </div>
+                                      <div className="text-right font-black text-slate-900">
+                                        ₩ {calcKrw(exp).toLocaleString()} 원
+                                        <div className="text-[10px] text-slate-400 font-semibold">({exp.amountLocal} {selectedCountry.currency})</div>
+                                      </div>
+                                    </div>
+                                  </SwipeableCard>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 📷 [4] 포토 일기 */}
+                {activeTab === 'diaries' && (
+                  <div className="space-y-4">
+                    <button 
+                      onClick={() => setFullEditDiary({
+                        id: Date.now(), countryId: selectedCountry.id, day: 1, createdDate: getDateForDay(selectedCountry.startDate, 1), title: '', blocks: [{ id: Date.now(), image: '', text: '' }]
+                      })}
+                      className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow"
+                    >
+                      + 일기 작성하기
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      {diaries
+                        .filter(d => d.countryId === selectedCountry.id)
+                        .sort((a, b) => a.day - b.day)
+                        .map(d => (
+                          <div 
+                            key={d.id} 
+                            onClick={() => setFullDiaryModal(d)}
+                            className="bg-white rounded-2xl border p-3 shadow-sm cursor-pointer space-y-2 flex flex-col justify-between hover:border-indigo-500"
+                          >
+                            <div className="space-y-1.5">
+                              <div className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md inline-block">
+                                Day {d.day} ({getDateForDay(selectedCountry.startDate, d.day)})
+                              </div>
+                              {d.blocks[0]?.image ? (
+                                <img src={d.blocks[0].image} className="h-28 w-full object-cover rounded-xl" />
+                              ) : (
+                                <div className="h-28 w-full bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 text-xs font-bold">📷 노사진</div>
+                              )}
+                              <h3 className="font-bold text-sm text-slate-800 line-clamp-1">{d.title}</h3>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+              </main>
+
+              {/* 하단 탭 바 */}
+              <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t flex justify-around items-center py-2 z-30 shadow-lg">
+                {[
+                  { id: 'home', label: '홈', icon: '🏠' },
+                  { id: 'itinerary', label: '동선', icon: '📍' },
+                  { id: 'expenses', label: '가계부', icon: '💰' },
+                  { id: 'diaries', label: '일기', icon: '📷' }
+                ].map(tab => (
+                  <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center flex-1 py-1 ${activeTab === tab.id ? 'text-indigo-600 font-black' : 'text-slate-400'}`}>
+                    <span className="text-base">{tab.icon}</span>
+                    <span className="text-[10px] mt-0.5">{tab.label}</span>
+                  </button>
+                ))}
+              </nav>
+
+              {/* 모달 팝업들 */}
+              {showStatsModal && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <h3 className="font-black text-lg text-slate-800">📊 여행 분석 통계 & 별점</h3>
+                    <button onClick={() => setShowStatsModal(false)} className="text-slate-400 font-bold">✕ 닫기</button>
+                  </div>
+
+                  <div className="flex border rounded-xl overflow-hidden bg-white p-1 shadow-sm text-xs font-bold">
+                    <button onClick={() => setStatsTab('chart')} className={`flex-1 py-2 rounded-lg ${statsTab === 'chart' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
+                      📊 지출 항목 파이차트
+                    </button>
+                    <button onClick={() => setStatsTab('ratings')} className={`flex-1 py-2 rounded-lg ${statsTab === 'ratings' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
+                      ★ 별점 & Top 랭킹
+                    </button>
+                  </div>
+
+                  {statsTab === 'chart' && (
+                    <div className="space-y-5 pt-2">
+                      <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 text-center space-y-1">
+                        <span className="text-xs font-bold text-indigo-700">총 지출 금액</span>
+                        <div className="text-2xl font-black text-indigo-950">₩ {statsData.grandTotal.toLocaleString()} 원</div>
+                      </div>
+
+                      {statsData.grandTotal === 0 ? (
+                        <div className="p-8 text-center text-xs text-slate-400 font-bold bg-slate-50 rounded-2xl border">
+                          지출 내역이 등록되지 않았습니다. 가계부에 지출을 입력해 주세요!
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="flex justify-center items-center py-2">
+                            <div 
+                              className="w-44 h-44 rounded-full shadow-lg relative flex items-center justify-center border-4 border-white"
+                              style={{ background: statsData.conicGradient }}
+                            >
+                              <div className="w-20 h-20 bg-white rounded-full flex flex-col items-center justify-center shadow-inner">
+                                <span className="text-[10px] font-bold text-slate-400">카테고리</span>
+                                <span className="text-xs font-black text-slate-800">지출 비율</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <span className="text-xs font-black text-slate-700 block px-1">카테고리별 상세 내역</span>
+                            {statsData.categoryTotals.map((item, idx) => (
+                              <div key={idx} className="bg-white p-3 rounded-xl border flex justify-between items-center text-xs shadow-sm">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: item.color }}></span>
+                                  <span className="font-bold text-slate-800">{getCategoryBadgeIcon(item.name)} {item.name}</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="font-black text-slate-900">₩ {item.amount.toLocaleString()} 원</span>
+                                  <span className="text-[10px] font-bold text-slate-400 ml-2">({item.percent}%)</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {statsTab === 'ratings' && (
+                    <div className="space-y-4 pt-1">
+                      {(() => {
+                        const unratedSpots = getUnratedVisitedSpots();
+                        if (unratedSpots.length === 0) return null;
+                        return (
+                          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 space-y-2">
+                            <div className="flex justify-between items-center text-xs font-black text-amber-900">
+                              <span>★ 별점 평가 대기 목록 ({unratedSpots.length}개)</span>
+                              <span className="text-[10px] text-amber-700 font-normal">방문 완료 후 평가 작성 대기</span>
+                            </div>
+                            <div className="flex gap-2 overflow-x-auto pt-1">
+                              {unratedSpots.map(s => (
+                                <button key={s.id} onClick={() => openFullRatingPage(s.name, s.address, s.category)} className="px-3 py-1.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-amber-900 whitespace-nowrap shadow-sm hover:bg-amber-100 flex items-center gap-1">
+                                  <span>★ 평가하기:</span>
+                                  <span className="text-indigo-700">{s.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      <div className="flex gap-1 overflow-x-auto text-xs font-bold py-1">
+                        {['ALL', '식당', '관광지', '카페', '쇼핑', '기타'].map(cat => (
+                          <button key={cat} onClick={() => setSpotCategoryFilter(cat)} className={`px-3 py-1 rounded-xl border whitespace-nowrap ${spotCategoryFilter === cat ? 'bg-amber-500 text-white' : 'bg-white text-slate-600'}`}>
+                            {cat === 'ALL' ? '전체' : cat}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex justify-end gap-2 text-xs font-bold">
+                        <select value={spotSortOption} onChange={e => setSpotSortOption(e.target.value)} className="p-1.5 border rounded-xl bg-white text-slate-700">
+                          <option value="ratingHigh">별점 높은순</option>
+                          <option value="ratingLow">별점 낮은순</option>
+                          <option value="topRank">Top 랭킹순</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-2">
+                        {getFilteredAndSortedSpots().map(s => (
+                          <div key={s.id} onClick={() => openFullRatingPage(s.name, s.address, s.category)} className="bg-white p-3.5 rounded-2xl border border-slate-200 relative shadow-sm cursor-pointer space-y-1">
+                            {s.rank > 0 && <span className={`absolute top-3 right-3 px-2 py-0.5 rounded-md text-[11px] font-black text-white ${s.rank === 1 ? 'bg-amber-500' : s.rank === 2 ? 'bg-slate-400' : 'bg-amber-700'}`}>🏆 Top {s.rank}위</span>}
+                            <div className="font-bold text-sm text-slate-800">{s.name}</div>
+                            
+                            <div className="text-xs text-indigo-600 font-bold">
+                              [{s.category}] ★ {s.rating}.0
+                            </div>
+                            <p className="text-xs text-slate-600">{s.review}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {viewSpotDetail && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <span className="font-black text-lg text-slate-800">
+                      [{viewSpotDetail.category || '장소'}] 상세 정보 (조회 모드)
+                    </span>
+                    <button onClick={() => setViewSpotDetail(null)} className="text-slate-400 font-bold text-xl">✕</button>
+                  </div>
+
+                  <div className="space-y-4 flex-1">
+                    <div className="bg-indigo-50/70 p-4 rounded-3xl border border-indigo-100 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-extrabold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded">
+                          {getCategoryBadgeIcon(viewSpotDetail.category)} {viewSpotDetail.category}
+                        </span>
+                        {viewSpotDetail.enableTime && viewSpotDetail.hour && (
+                          <span className="text-xs font-bold text-indigo-900 bg-white px-2 py-0.5 rounded-lg border border-indigo-100">
+                            ⏰ 방문 시간: {viewSpotDetail.hour}:{viewSpotDetail.minute || '00'}
+                          </span>
+                        )}
+                      </div>
+
+                      <h2 className="text-2xl font-black text-slate-900">{viewSpotDetail.name}</h2>
+                      
+                      {viewSpotDetail.plannedBudget && (
+                        <div className="text-xs font-bold text-emerald-800 bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+                          💸 예상 지출 금액: ₩ {calcPlannedKrw(viewSpotDetail.plannedBudget).toLocaleString()} 원 ({viewSpotDetail.plannedBudget} {selectedCountry.currency})
+                        </div>
+                      )}
+                    </div>
+
+                    {viewSpotDetail.address && (
+                      <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-2">
+                        <span className="text-xs font-bold text-slate-500 block">📍 주소</span>
+                        <div className="flex justify-between items-center text-xs font-bold text-slate-800">
+                          <span>{viewSpotDetail.address}</span>
+                          <button onClick={() => openGoogleMaps(viewSpotDetail.address || viewSpotDetail.name)} className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-bold shrink-0 ml-2 shadow-sm">
+                            구글 지도 ➔
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {viewSpotDetail.image && (
+                      <div className="space-y-1">
+                        <span className="text-xs font-bold text-slate-500 block">① 대표 사진</span>
+                        <img src={viewSpotDetail.image} className="w-full max-h-64 object-cover rounded-2xl border border-slate-100" />
+                      </div>
+                    )}
+
+                    {viewSpotDetail.menuImage && (
+                      <div className="space-y-1">
+                        <span className="text-xs font-bold text-slate-500 block">② 메뉴판 / 참고 사진</span>
+                        <img src={viewSpotDetail.menuImage} className="w-full max-h-64 object-cover rounded-2xl border border-slate-100" />
+                      </div>
+                    )}
+
+                    {viewSpotDetail.menuMemo && (
+                      <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-1">
+                        <span className="text-xs font-bold text-slate-500 block">📝 픽한 메뉴 & 메모</span>
+                        <p className="text-xs text-slate-700 leading-relaxed font-semibold">{viewSpotDetail.menuMemo}</p>
+                      </div>
+                    )}
+
+                    {viewSpotDetail.blogUrl && (
+                      <div className="pt-1 text-center">
+                        <a href={viewSpotDetail.blogUrl.startsWith('http') ? viewSpotDetail.blogUrl : `https://${viewSpotDetail.blogUrl}`} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 font-bold underline">
+                          🔗 참고 블로그 / 링크 바로가기 ➔
+                        </a>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-3 border-t flex gap-2">
+                    <button 
+                      onClick={() => handleDeleteItinerarySpot(viewSpotDetail)} 
+                      className="flex-1 py-3 bg-red-50 text-red-600 rounded-2xl font-bold text-xs border border-red-200"
+                    >
+                      🗑️ 장소 삭제
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setFullAddSpot(viewSpotDetail);
+                        setViewSpotDetail(null);
+                      }} 
+                      className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-bold text-xs shadow-md"
+                    >
+                      ✏️ 정보 수정
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {showAirtelModal && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <h3 className="font-black text-lg text-slate-800">🛫 에어텔 (항공권 & 숙소)</h3>
+                    <button onClick={() => setShowAirtelModal(false)} className="text-slate-400 font-bold">✕ 닫기</button>
+                  </div>
+
+                  <button onClick={() => { setShowAirtelModal(false); setShowVoucherListModal(true); }} className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow flex items-center justify-center gap-1.5">
+                    📄 서류함 바우처 즉시 확인 ➔
+                  </button>
+
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={() => setShowFlightModal(true)} className="flex-1 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold">+ ✈️ 항공편 추가</button>
+                    <button onClick={() => setShowHotelModal(true)} className="flex-1 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold">+ 🏨 숙소 추가</button>
+                  </div>
+
+                  <div className="space-y-3 pt-2">
+                    <h4 className="font-bold text-xs text-slate-500">✈️ 항공편 리스트</h4>
+                    {flights.filter(f => f.countryId === selectedCountry.id).map(f => (
+                      <div key={f.id} className="bg-slate-50 p-3 rounded-xl border text-xs space-y-1">
+                        <div className="font-bold text-indigo-700">{f.flightNo} ({f.departureDate})</div>
+                        <div className="text-slate-600">{f.note}</div>
+                        {f.paymentPlatform && <div className="text-[10px] text-slate-400">💳 결제처: {f.paymentPlatform}</div>}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3 pt-2">
+                    <h4 className="font-bold text-xs text-slate-500">🏨 숙소 리스트</h4>
+                    {hotels.filter(h => h.countryId === selectedCountry.id).map(h => (
+                      <div key={h.id} className="bg-slate-50 p-3 rounded-xl border text-xs space-y-1">
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold text-slate-800">{h.name}</span>
+                          <button onClick={() => openGoogleMaps(h.address || h.name)} className="text-xs text-indigo-600 font-bold underline">📍 지도 보기</button>
+                        </div>
+                        <div className="text-slate-600">📅 일정: {h.checkInDate} ~ {h.checkOutDate}</div>
+                        <div className="text-slate-600">⏰ 체크인: {h.checkInTime} / 체크아웃: {h.checkOutTime}</div>
+                        <div className="text-slate-400 text-[10px]">📍 {h.address}</div>
+                        {h.paymentPlatform && <div className="text-[10px] text-slate-400">💳 결제처: {h.paymentPlatform} (예약번호: {h.bookingNo})</div>}
+                        {h.note && <div className="text-[10px] text-indigo-600 font-bold">📝 세부메모: {h.note}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {showVoucherListModal && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <h3 className="font-black text-lg text-slate-800">📄 서류함 (PDF & 이미지)</h3>
+                    <button onClick={() => setShowVoucherListModal(false)} className="text-slate-400 font-bold">✕ 닫기</button>
+                  </div>
+                  <button onClick={() => { setEditingVoucherId(null); setNewVoucher({ title: '', fileName: '', fileData: '' }); setShowVoucherModal(true); }} className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow">+ 서류 추가</button>
+                  
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    {vouchers.filter(v => v.countryId === selectedCountry.id).map(v => (
+                      <div 
+                        key={v.id} 
+                        onClick={() => setPreviewVoucher(v)}
+                        onTouchStart={() => handleVoucherTouchStart(v)}
+                        onTouchEnd={handleVoucherTouchEnd}
+                        onMouseDown={() => handleVoucherTouchStart(v)}
+                        onMouseUp={handleVoucherTouchEnd}
+                        onMouseLeave={handleVoucherTouchEnd}
+                        className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm cursor-pointer hover:border-indigo-500 space-y-2 relative group select-none"
+                      >
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleDeleteVoucher(v.id, v.title); }} 
+                          className="absolute top-2 right-2 bg-red-500 text-white w-5 h-5 rounded-full text-[10px] font-bold z-10 flex items-center justify-center opacity-80 hover:opacity-100"
+                          title="서류 삭제"
+                        >
+                          ✕
+                        </button>
+
+                        <div className="h-28 bg-slate-100 rounded-xl flex items-center justify-center text-3xl border overflow-hidden p-1">
+                          {v.fileData && v.fileData.startsWith('data:image') ? (
+                            <img src={v.fileData} className="h-full w-full object-cover rounded-lg" />
+                          ) : (
+                            <div className="flex flex-col items-center">
+                              <span>📄</span>
+                              <span className="text-[9px] text-slate-400 font-bold mt-1 uppercase">{v.fileName.split('.').pop() || 'PDF'}</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="font-bold text-xs truncate text-slate-800">{v.title}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {previewVoucher && (
+                <div className="fixed inset-0 bg-black/80 z-50 flex flex-col justify-center items-center p-4">
+                  <div className="bg-white rounded-3xl p-4 w-full max-w-sm space-y-3 text-center">
+                    <div className="flex justify-between items-center border-b pb-2">
+                      <h4 className="font-black text-slate-800 text-sm">{previewVoucher.title}</h4>
+                      <button onClick={() => setPreviewVoucher(null)} className="text-slate-400 font-bold">✕</button>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto bg-slate-100 rounded-2xl p-2 border flex items-center justify-center">
+                      {previewVoucher.fileData && previewVoucher.fileData.startsWith('data:image') ? (
+                        <img src={previewVoucher.fileData} className="w-full object-contain rounded-xl" />
+                      ) : (
+                        <div className="p-8 text-center text-xs text-slate-500 font-bold">📄 {previewVoucher.fileName} 미리보기</div>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button onClick={() => {
+                        setEditingVoucherId(previewVoucher.id);
+                        setNewVoucher({ title: previewVoucher.title, fileName: previewVoucher.fileName, fileData: previewVoucher.fileData });
+                        setPreviewVoucher(null);
+                        setShowVoucherModal(true);
+                      }} className="flex-1 py-2.5 bg-slate-100 rounded-xl text-xs font-bold">✏️ 서류 수정</button>
+
+                      {previewVoucher.fileData ? (
+                        <a href={previewVoucher.fileData} download={previewVoucher.fileName || 'voucher_file'} className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow flex items-center justify-center">
+                          💾 다운로드
+                        </a>
+                      ) : (
+                        <button onClick={() => alert('다운로드할 파일 데이터가 존재하지 않습니다.')} className="flex-1 py-2.5 bg-slate-200 text-slate-500 rounded-xl text-xs font-bold">
+                          💾 다운로드
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showVoucherModal && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl p-5 w-full max-w-xs space-y-3">
+                    <h4 className="font-black text-slate-800 border-b pb-2">{editingVoucherId ? '✏️ 서류 수정' : '📄 새 서류 추가'}</h4>
+                    <input type="text" placeholder="서류 제목 (예: 여권 사본)" value={newVoucher.title} onChange={e => setNewVoucher({...newVoucher, title: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <input type="file" onChange={e => handleFileUpload(e, (name, base64) => setNewVoucher({...newVoucher, fileName: name, fileData: base64}))} className="w-full text-xs p-1 border rounded-xl" />
+                    <div className="flex gap-2 pt-2">
+                      <button onClick={() => setShowVoucherModal(false)} className="flex-1 py-2 bg-slate-100 text-xs font-bold rounded-xl">취소</button>
+                      <button onClick={handleSaveVoucherSubmit} className="flex-1 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl">{editingVoucherId ? '수정 완료' : '등록'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showTipListModal && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <h3 className="font-black text-lg text-slate-800">💡 여행 팁</h3>
+                    <button onClick={() => setShowTipListModal(false)} className="text-slate-400 font-bold">✕ 닫기</button>
+                  </div>
+                  
+                  <button onClick={handleOpenAddTipModal} className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow">+ 팁 추가</button>
+                  
+                  <div className="flex gap-1 overflow-x-auto text-xs font-bold py-1">
+                    {['전체', '교통', '환전', '현지 매너', '준비물', '맛집/기타'].map(cat => (
+                      <button key={cat} onClick={() => setTipCategoryFilter(cat)} className={`px-3 py-1 rounded-xl border whitespace-nowrap ${tipCategoryFilter === cat ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3">
+                    {tips.filter(t => t.countryId === selectedCountry.id && (tipCategoryFilter === '전체' || t.category === tipCategoryFilter)).map(t => (
+                      <div key={t.id} className="bg-white p-4 rounded-2xl border space-y-2 shadow-sm">
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold text-sm text-slate-800">{t.title}</span>
+                          <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full">{t.category}</span>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{t.content}</p>
+                        {t.image && <img src={t.image} className="w-full h-32 object-cover rounded-xl mt-1 border" />}
+                        {t.link && (
+                          <div className="pt-1">
+                            <a href={t.link.startsWith('http') ? t.link : `https://${t.link}`} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 font-bold underline flex items-center gap-1">
+                              🔗 관련 참고 링크 바로가기 ➔
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {showTipModal && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl p-5 w-full max-w-xs space-y-3">
+                    <h4 className="font-black text-slate-800 border-b pb-2">💡 여행 팁 추가</h4>
+                    <input type="text" placeholder="제목" value={newTip.title} onChange={e => setNewTip({...newTip, title: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    
+                    <select value={newTip.category} onChange={e => setNewTip({...newTip, category: e.target.value})} className="w-full p-2 border rounded-xl text-xs font-bold">
+                      <option value="교통">교통</option>
+                      <option value="환전">환전</option>
+                      <option value="현지 매너">현지 매너</option>
+                      <option value="준비물">준비물</option>
+                      <option value="맛집/기타">맛집/기타</option>
+                    </select>
+
+                    <textarea placeholder="팁 내용 작성" value={newTip.content} onChange={e => setNewTip({...newTip, content: e.target.value})} className="w-full p-2 border rounded-xl text-xs h-24" />
+                    <input type="text" placeholder="🔗 참고 블로그 / 링크 URL" value={newTip.link} onChange={e => setNewTip({...newTip, link: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 block">📷 팁 참고 이미지 첨부 (선택)</label>
+                      <input type="file" accept="image/*" onChange={e => handleFileUpload(e, (name, base64) => setNewTip({...newTip, image: base64}))} className="w-full text-xs p-1 border rounded bg-white" />
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button onClick={() => setShowTipModal(false)} className="flex-1 py-2 bg-slate-100 text-xs font-bold rounded-xl">취소</button>
+                      <button onClick={() => { 
+                        const nextTips = [...tips, { ...newTip, id: Date.now(), countryId: selectedCountry.id }];
+                        setTips(nextTips); 
+                        syncToCloud({ tips: nextTips });
+                        setShowTipModal(false); 
+                      }} className="flex-1 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl">등록</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showWishModal && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <h3 className="font-black text-lg text-slate-800">✨ 위시리스트</h3>
+                    <button onClick={() => setShowWishModal(false)} className="text-slate-400 font-bold">✕ 닫기</button>
+                  </div>
+                  <div className="flex border rounded-xl overflow-hidden bg-white p-1 shadow-sm text-xs font-bold">
+                    <button onClick={() => setWishCategoryTab('place')} className={`flex-1 py-2 rounded-lg ${wishCategoryTab === 'place' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>📍 장소 위시</button>
+                    <button onClick={() => setWishCategoryTab('shopping')} className={`flex-1 py-2 rounded-lg ${wishCategoryTab === 'shopping' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>🛍️ 쇼핑 위시 (물건)</button>
+                  </div>
+                  
+                  <button onClick={() => setFullAddSpot({ id: Date.now(), day: 0, enableTime: false, hour: '12', minute: '00', name: '', category: wishCategoryTab === 'place' ? '관광지' : '쇼핑', wishType: wishCategoryTab, address: '', inItinerary: false, purchasePlace: '', plannedBudget: '' })} className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold">
+                    + {wishCategoryTab === 'place' ? '장소 위시 추가' : '쇼핑 물건 위시 추가'}
+                  </button>
+                </div>
+              )}
+
+              {showFlightModal && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl p-5 w-full max-w-xs space-y-3">
+                    <h4 className="font-black text-slate-800 border-b pb-2">✈️ 항공편 추가</h4>
+                    <input type="text" placeholder="항공편명 (예: KE703)" value={newFlight.flightNo} onChange={e => setNewFlight({...newFlight, flightNo: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <input type="date" value={newFlight.departureDate} onChange={e => setNewFlight({...newFlight, departureDate: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <input type="text" placeholder="💳 결제처 (예: 트립닷컴, 현대카드)" value={newFlight.paymentPlatform} onChange={e => setNewFlight({...newFlight, paymentPlatform: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <input type="text" placeholder="노선 및 시간 메모 (예: 인천T2 -> 나리타T1)" value={newFlight.note} onChange={e => setNewFlight({...newFlight, note: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <div className="flex gap-2 pt-2">
+                      <button onClick={() => setShowFlightModal(false)} className="flex-1 py-2 bg-slate-100 text-xs font-bold rounded-xl">취소</button>
+                      <button onClick={() => { 
+                        const nextFlights = [...flights, { ...newFlight, id: Date.now(), countryId: selectedCountry.id }];
+                        setFlights(nextFlights); 
+                        syncToCloud({ flights: nextFlights });
+                        setShowFlightModal(false); 
+                      }} className="flex-1 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl">등록</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showHotelModal && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl p-5 w-full max-w-xs space-y-3">
+                    <h4 className="font-black text-slate-800 border-b pb-2">🏨 숙소 추가</h4>
+                    <input type="text" placeholder="숙소명" value={newHotel.name} onChange={e => setNewHotel({...newHotel, name: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="date" value={newHotel.checkInDate} onChange={e => setNewHotel({...newHotel, checkInDate: e.target.value})} className="p-2 border rounded-xl text-[10px]" />
+                      <input type="time" value={newHotel.checkInTime} onChange={e => setNewHotel({...newHotel, checkInTime: e.target.value})} className="p-2 border rounded-xl text-xs" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="date" value={newHotel.checkOutDate} onChange={e => setNewHotel({...newHotel, checkOutDate: e.target.value})} className="p-2 border rounded-xl text-[10px]" />
+                      <input type="time" value={newHotel.checkOutTime} onChange={e => setNewHotel({...newHotel, checkOutTime: e.target.value})} className="p-2 border rounded-xl text-xs" />
+                    </div>
+                    <input type="text" placeholder="💳 결제처 (예: 아고다 현장결제)" value={newHotel.paymentPlatform} onChange={e => setNewHotel({...newHotel, paymentPlatform: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <input type="text" placeholder="📍 숙소 주소" value={newHotel.address} onChange={e => setNewHotel({...newHotel, address: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <input type="text" placeholder="예약번호" value={newHotel.bookingNo} onChange={e => setNewHotel({...newHotel, bookingNo: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <input type="text" placeholder="📝 세부 메모 사항" value={newHotel.note} onChange={e => setNewHotel({...newHotel, note: e.target.value})} className="w-full p-2 border rounded-xl text-xs" />
+                    <div className="flex gap-2 pt-2">
+                      <button onClick={() => setShowHotelModal(false)} className="flex-1 py-2 bg-slate-100 text-xs font-bold rounded-xl">취소</button>
+                      <button onClick={() => { 
+                        const nextHotels = [...hotels, { ...newHotel, id: Date.now(), countryId: selectedCountry.id }];
+                        setHotels(nextHotels); 
+                        syncToCloud({ hotels: nextHotels });
+                        setShowHotelModal(false); 
+                      }} className="flex-1 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl">등록</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {fullAddSpot && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <h3 className="font-black text-lg text-slate-800">
+                      {fullAddSpot.wishType === 'shopping' ? '🛍️ 물건 상세 정보 수정' : '📍 장소 상세 정보 수정'}
+                    </h3>
+                    <button onClick={() => setFullAddSpot(null)} className="text-slate-400 font-bold">✕ 닫기</button>
+                  </div>
+
+                  <input 
+                    type="text" 
+                    placeholder={fullAddSpot.wishType === 'shopping' ? "구매할 물건 이름" : "장소/가게 이름"} 
+                    value={fullAddSpot.name} 
+                    onChange={e => setFullAddSpot({...fullAddSpot, name: e.target.value})} 
+                    className="w-full p-3 border rounded-xl font-bold text-base bg-slate-50" 
+                  />
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-emerald-800 block">💸 예상 지출 금액 ({selectedCountry.currency})</label>
+                    <input 
+                      type="number" 
+                      placeholder={`예상 지출 금액 (${selectedCountry.currency})`} 
+                      value={fullAddSpot.plannedBudget || ''} 
+                      onChange={e => handleCleanZeroInput(e.target.value, (val) => setFullAddSpot({...fullAddSpot, plannedBudget: val}))} 
+                      className="w-full p-3 border rounded-xl text-xs font-bold text-emerald-900 bg-emerald-50/50" 
+                    />
+                  </div>
+
+                  {fullAddSpot.wishType === 'shopping' && (
+                    <input type="text" placeholder="🏬 구매처 (예: 돈키호테 신주쿠점, 로프트)" value={fullAddSpot.purchasePlace || ''} onChange={e => setFullAddSpot({...fullAddSpot, purchasePlace: e.target.value})} className="w-full p-3 border rounded-xl text-xs font-bold text-indigo-700" />
+                  )}
+
+                  {fullAddSpot.wishType !== 'shopping' && (
+                    <div className="bg-slate-50 p-3 rounded-xl border space-y-2">
+                      <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={fullAddSpot.enableTime || false} 
+                          onChange={e => setFullAddSpot({...fullAddSpot, enableTime: e.target.checked})} 
+                          className="rounded text-indigo-600"
+                        />
+                        <span>⏰ 방문 예정 시간 설정 (선택 사항)</span>
+                      </label>
+
+                      {fullAddSpot.enableTime && (
+                        <div className="flex items-center gap-2 pt-1">
+                          <select value={fullAddSpot.hour || '12'} onChange={e => setFullAddSpot({...fullAddSpot, hour: e.target.value})} className="flex-1 p-2 border rounded-lg font-bold text-center bg-white">
+                            {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(h => <option key={h} value={h}>{h} 시</option>)}
+                          </select>
+                          <span className="font-black text-slate-400">:</span>
+                          <select value={fullAddSpot.minute || '00'} onChange={e => setFullAddSpot({...fullAddSpot, minute: e.target.value})} className="flex-1 p-2 border rounded-lg font-bold text-center bg-white">
+                            {['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'].map(m => <option key={m} value={m}>{m} 분</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {fullAddSpot.wishType !== 'shopping' && (
+                    <input type="text" placeholder="📍 구글 맵 주소" value={fullAddSpot.address} onChange={e => setFullAddSpot({...fullAddSpot, address: e.target.value})} className="w-full p-3 border rounded-xl text-xs" />
+                  )}
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 block">① 대표 사진 파일 업로드</label>
+                    <input type="file" accept="image/*" onChange={e => handleFileUpload(e, (name, base64) => setFullAddSpot({...fullAddSpot, image: base64}))} className="w-full text-xs p-2 border rounded-xl bg-slate-50" />
+                    {fullAddSpot.image && <img src={fullAddSpot.image} className="h-24 w-full object-cover rounded-lg mt-1" />}
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 block">② 메뉴판 / 참고 사진 파일 업로드</label>
+                    <input type="file" accept="image/*" onChange={e => handleFileUpload(e, (name, base64) => setFullAddSpot({...fullAddSpot, menuImage: base64}))} className="w-full text-xs p-2 border rounded-xl bg-slate-50" />
+                    {fullAddSpot.menuImage && <img src={fullAddSpot.menuImage} className="h-24 w-full object-cover rounded-lg mt-1" />}
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 block">③ 참고 블로그 / 링크 URL</label>
+                    <input type="text" placeholder="🔗 참고 블로그 / 리뷰 링크 URL" value={fullAddSpot.blogUrl} onChange={e => setFullAddSpot({...fullAddSpot, blogUrl: e.target.value})} className="w-full p-3 border rounded-xl text-xs" />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 block">④ 픽한 메뉴 / 메모 사항</label>
+                    <input type="text" placeholder="📝 메모 입력" value={fullAddSpot.menuMemo} onChange={e => setFullAddSpot({...fullAddSpot, menuMemo: e.target.value})} className="w-full p-3 border rounded-xl text-xs" />
+                  </div>
+
+                  <button onClick={() => executeSpotItineraryUpdate(fullAddSpot, fullAddSpot.day || 1)} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-md">
+                    설정 저장하기
+                  </button>
+                </div>
+              )}
+
+              {fullRatingPage && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <h3 className="font-black text-lg text-slate-800">★ 별점 & Top 랭킹 평가</h3>
+                    <button onClick={() => setFullRatingPage(null)} className="text-slate-400 font-bold">✕ 취소</button>
+                  </div>
+
+                  <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 flex justify-between items-center">
+                    <span className="text-xs font-bold text-indigo-900">평가 카테고리</span>
+                    <select value={fullRatingPage.category} onChange={e => setFullRatingPage({...fullRatingPage, category: e.target.value})} className="p-1 border rounded-lg font-bold text-xs bg-white text-indigo-700">
+                      <option value="식당">🍽️ 식당</option>
+                      <option value="관광지">🏛️ 관광지</option>
+                      <option value="카페">☕ 카페</option>
+                      <option value="쇼핑">🛍️ 쇼핑</option>
+                      <option value="기타">📌 기타</option>
+                    </select>
+                  </div>
+
+                  <input type="text" value={fullRatingPage.spotName} onChange={e => setFullRatingPage({...fullRatingPage, spotName: e.target.value})} placeholder="장소명" className="w-full p-3 border rounded-xl font-bold text-base" />
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-xs text-slate-600">별점 선택</label>
+                    <div className="flex gap-2">
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <button key={star} onClick={() => setFullRatingPage({...fullRatingPage, rating: star})} className={`flex-1 py-2 rounded-xl font-bold text-sm ${fullRatingPage.rating === star ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-400'}`}>★ {star}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-xs text-slate-600">🏆 [{fullRatingPage.category}] 랭킹 지정 (선택)</label>
+                    <div className="flex gap-2">
+                      {[0, 1, 2, 3].map(rk => (
+                        <button key={rk} onClick={() => setFullRatingPage({...fullRatingPage, rank: rk})} className={`flex-1 py-2 rounded-xl font-bold text-xs ${fullRatingPage.rank === rk ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{rk === 0 ? '선택안함' : `${rk}위`}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <textarea placeholder="솔직한 리뷰를 입력하세요..." value={fullRatingPage.review} onChange={e => setFullRatingPage({...fullRatingPage, review: e.target.value})} className="w-full p-3 border rounded-xl text-xs h-32" />
+                  <button onClick={() => handleSaveRatingProcess(false)} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-md">별점 저장 완료</button>
+                </div>
+              )}
+
+              {rankShiftPopup && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl p-6 w-full max-w-xs space-y-4 text-center">
+                    <h3 className="font-black text-slate-800 text-base">🏆 랭킹 밀어내기 안내</h3>
+                    <p className="text-xs text-slate-600">
+                      이미 <span className="font-bold text-indigo-600">[{rankShiftPopup.existingItem.name}]</span> 장소가 {rankShiftPopup.newRank}위로 지정되어 있습니다.<br/>
+                      해당 장소를 밀어내고 변경하시겠습니까?
+                    </p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setRankShiftPopup(null)} className="flex-1 py-2.5 bg-slate-100 rounded-xl text-xs font-bold">취소</button>
+                      <button onClick={() => handleSaveRatingProcess(true)} className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold">밀어내기 순위 변경</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {fullEditDiary && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <h3 className="font-black text-lg text-slate-800">📷 블록형 포토 일기 작성</h3>
+                    <button onClick={() => setFullEditDiary(null)} className="text-slate-400 font-bold">✕ 취소</button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-2xl border">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-600 block mb-1">여행 일차 지정</label>
+                      <select 
+                        value={fullEditDiary.day} 
+                        onChange={e => {
+                          const d = Number(e.target.value);
+                          setFullEditDiary({
+                            ...fullEditDiary,
+                            day: d,
+                            createdDate: getDateForDay(selectedCountry.startDate, d)
+                          });
+                        }}
+                        className="w-full p-2 border rounded-xl font-bold text-xs bg-white text-indigo-700"
+                      >
+                        {Array.from({ length: calculateTotalDays(selectedCountry.startDate, selectedCountry.endDate) }, (_, i) => i + 1).map(dayNum => (
+                          <option key={dayNum} value={dayNum}>{dayNum}일 차</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-600 block mb-1">연동된 실제 날짜</label>
+                      <div className="p-2 border rounded-xl text-xs font-bold bg-white text-emerald-600 flex items-center justify-center h-[34px]">
+                        📅 {fullEditDiary.createdDate || getDateForDay(selectedCountry.startDate, fullEditDiary.day)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <input type="text" placeholder="일기 제목 입력" value={fullEditDiary.title} onChange={e => setFullEditDiary({...fullEditDiary, title: e.target.value})} className="w-full p-3 border rounded-xl font-bold text-base" />
+
+                  <div className="space-y-4">
+                    {fullEditDiary.blocks.map((block, bIdx) => (
+                      <div key={block.id} className="bg-slate-50 p-4 rounded-2xl border space-y-3 relative">
+                        <div className="flex justify-between items-center border-b pb-2">
+                          <span className="font-bold text-xs text-indigo-600">블록 #{bIdx + 1}</span>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => handleMoveDiaryBlock(bIdx, -1)} className="p-1 text-xs font-bold">▲</button>
+                            <button onClick={() => handleMoveDiaryBlock(bIdx, 1)} className="p-1 text-xs font-bold">▼</button>
+                            <button onClick={() => handleDeleteDiaryBlock(block.id)} className="p-1 text-xs font-bold text-red-500 ml-2">🗑️ 삭제</button>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-slate-500">사진 첨부 (파일 선택)</label>
+                          <input type="file" accept="image/*" onChange={e => handleFileUpload(e, (name, base64) => handleUpdateDiaryBlock(block.id, 'image', base64))} className="w-full text-xs p-1.5 border rounded-xl bg-white" />
+                          {block.image && <img src={block.image} className="w-full h-36 object-cover rounded-xl mt-2" />}
+                        </div>
+                        <textarea placeholder="추억 / 일기 내용 작성..." value={block.text} onChange={e => handleUpdateDiaryBlock(block.id, 'text', e.target.value)} className="w-full p-3 border rounded-xl text-xs h-24 bg-white" />
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={handleAddDiaryBlock} className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold border border-slate-200">+ 사진/텍스트 블록 추가</button>
+                  <button onClick={handleSaveDiarySubmit} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl text-sm font-bold shadow-md">일기 저장 완료</button>
+                </div>
+              )}
+
+              {viewReceiptModal && (
+                <div className="fixed inset-0 bg-black/80 z-50 flex flex-col justify-center items-center p-4">
+                  <div className="bg-white rounded-3xl p-4 w-full max-w-sm space-y-3">
+                    <div className="flex justify-between items-center border-b pb-2">
+                      <span className="font-bold text-sm text-slate-800">🧾 영수증 이미지 관리</span>
+                      <button onClick={() => setViewReceiptModal(null)} className="text-slate-400 font-bold">✕</button>
+                    </div>
+                    <img src={viewReceiptModal.receiptImage} className="w-full max-h-80 object-contain rounded-xl border bg-slate-50" />
+                    
+                    <div className="flex gap-2 pt-2">
+                      <button 
+                        onClick={() => {
+                          handleDeleteReceipt(viewReceiptModal.id);
+                          setViewReceiptModal(null);
+                        }} 
+                        className="flex-1 py-2.5 bg-red-50 text-red-600 rounded-xl text-xs font-bold border border-red-200"
+                      >
+                        🗑️ 영수증 삭제
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setUploadReceiptTargetId(viewReceiptModal.id);
+                          setViewReceiptModal(null);
+                        }} 
+                        className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow"
+                      >
+                        ✏️ 영수증 변경
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {uploadReceiptTargetId && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl p-5 w-full max-w-xs space-y-3 text-center">
+                    <h4 className="font-black text-slate-800 text-sm border-b pb-2">🧾 영수증 사진 즉시 첨부</h4>
+                    <input type="file" accept="image/*" onChange={e => handleFileUpload(e, (name, base64) => handleDirectReceiptUpload(uploadReceiptTargetId, base64))} className="w-full text-xs p-1.5 border rounded-xl" />
+                    <button onClick={() => setUploadReceiptTargetId(null)} className="w-full py-2 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold">취소</button>
+                  </div>
+                </div>
+              )}
+
+              {fullDiaryModal && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <div>
+                      <h3 className="font-black text-lg text-slate-800">{fullDiaryModal.title}</h3>
+                      <div className="text-xs text-indigo-600 font-bold">Day {fullDiaryModal.createdDate || getDateForDay(selectedCountry.startDate, fullDiaryModal.day)}</div>
+                    </div>
+                    <button onClick={() => setFullDiaryModal(null)} className="text-slate-400 font-bold">✕ 닫기</button>
+                  </div>
+                  <div className="space-y-6 flex-1">
+                    {fullDiaryModal.blocks.map((block, idx) => (
+                      <div key={idx} className="space-y-2">
+                        {block.image && <img src={block.image} className="w-full rounded-2xl shadow-md" />}
+                        {block.text && <p className="text-sm text-slate-700 leading-relaxed bg-slate-50 p-4 rounded-2xl border">{block.text}</p>}
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => { setFullEditDiary(fullDiaryModal); setFullDiaryModal(null); }} className="w-full py-3 bg-indigo-600 text-white rounded-xl text-xs font-bold">✏️ 일기 수정하기</button>
+                </div>
+              )}
+
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<TravelApp />);
+  </script>
+</body>
+</html>
