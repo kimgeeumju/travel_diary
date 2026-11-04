@@ -27,24 +27,28 @@
     }
   </style>
 
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-  import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  <!-- Firebase SDK 모듈 로드 (Hosting 자동 연동) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-  // Firebase Hosting 전용 자동 설정 로드
-  const response = await fetch('/__/firebase/init.json');
-  const firebaseConfig = await response.json();
+    let firebaseConfig = {};
+    try {
+      const response = await fetch('/__/firebase/init.json');
+      firebaseConfig = await response.json();
+    } catch (e) {
+      console.warn("Firebase Hosting init.json을 불러올 수 없어 로컬 모드로 동작합니다.");
+    }
 
-  const app = initializeApp(firebaseConfig);
-  const auth = getAuth(app);
-  const db = getFirestore(app);
-  const provider = new GoogleAuthProvider();
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
 
-  window.FirebaseAPI = { auth, db, provider, signInWithPopup, signOut, onAuthStateChanged, doc, setDoc, onSnapshot };
-  window.dispatchEvent(new Event('firebase-ready'));
-</script>
-
+    window.FirebaseAPI = { auth, db, provider, signInWithPopup, signOut, onAuthStateChanged, doc, setDoc, onSnapshot };
+    window.dispatchEvent(new Event('firebase-ready'));
+  </script>
 </head>
 <body class="bg-slate-100 text-slate-800">
   <div id="root"></div>
@@ -162,11 +166,9 @@
     }
 
     function TravelApp() {
-      // Firebase 사용자 인증 상태
       const [user, setUser] = useState(null);
       const [fbReady, setFbReady] = useState(false);
 
-      // 여행 데이터 상태
       const [countries, setCountries] = useLocalStorage('travel_app_countries', []);
       const [selectedCountry, setSelectedCountry] = useState(null);
       const [activeTab, setActiveTab] = useState('home');
@@ -181,7 +183,7 @@
       const [usdLocal, setUsdLocal] = useLocalStorage('travel_app_usd_local', 150);
 
       const [expenses, setExpenses] = useLocalStorage('travel_app_expenses', []);
-      const [showAddExpense, setShowAddExpense] = useState(false);
+      const [activeExpenseSection, setActiveExpenseSection] = useState(null); // 지출 입력창이 활성화된 섹션 ('prep', 'day_1', 'day_2' 등)
       const [editingExpenseId, setEditingExpenseId] = useState(null);
       const [newExpense, setNewExpense] = useState({ daySection: 'day_1', day: 1, title: '', amountLocal: '', customKrw: '', category: '식비', paymentMethod: '카드', cardName: '', receiptImage: '', isDoubleExchange: false });
       const [viewReceiptModal, setViewReceiptModal] = useState(null);
@@ -231,7 +233,6 @@
       const [showWishModal, setShowWishModal] = useState(false);
       const [wishCategoryTab, setWishCategoryTab] = useState('place');
 
-      // Firebase 연결 및 인증 상태 감지
       useEffect(() => {
         const initFB = () => {
           if (window.FirebaseAPI) {
@@ -251,7 +252,6 @@
         }
       }, []);
 
-      // 클라우드 데이터 실시간 동기화 (로그인 시)
       useEffect(() => {
         if (!user || !window.FirebaseAPI) return;
         const { db, doc, onSnapshot } = window.FirebaseAPI;
@@ -275,7 +275,6 @@
         return () => unsub();
       }, [user]);
 
-      // 데이터 변경 시 Firestore 저장 헬퍼
       const syncToCloud = (updatedData) => {
         if (!user || !window.FirebaseAPI) return;
         const { db, doc, setDoc } = window.FirebaseAPI;
@@ -283,7 +282,6 @@
         setDoc(userDocRef, updatedData, { merge: true }).catch(err => console.error("Cloud Save Error:", err));
       };
 
-      // 구글 로그인 / 로그아웃
       const handleGoogleLogin = async () => {
         if (!window.FirebaseAPI) return;
         const { auth, provider, signInWithPopup } = window.FirebaseAPI;
@@ -604,6 +602,24 @@
         window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressName)}`, '_blank');
       };
 
+      // 💡 특정 일차/준비 섹션에서 '+ 추가' 버튼을 눌렀을 때 실행되는 폼 오픈 함수
+      const openAddExpenseForm = (sectionKey, dayNum = 0) => {
+        setEditingExpenseId(null);
+        setNewExpense({ 
+          daySection: sectionKey, 
+          day: dayNum, 
+          title: '', 
+          amountLocal: '', 
+          customKrw: '', 
+          category: sectionKey === 'prep' ? '기타' : '식비', 
+          paymentMethod: '카드', 
+          cardName: '', 
+          receiptImage: '', 
+          isDoubleExchange: false 
+        });
+        setActiveExpenseSection(sectionKey);
+      };
+
       const handleAddExpenseSubmit = () => {
         if (!newExpense.title || (!newExpense.amountLocal && !newExpense.customKrw)) return;
         const targetDay = newExpense.daySection && newExpense.daySection.startsWith('day_') 
@@ -646,7 +662,7 @@
         }
 
         syncToCloud({ expenses: nextExpenses });
-        setShowAddExpense(false);
+        setActiveExpenseSection(null);
       };
 
       const handleEditExpense = (exp) => {
@@ -663,7 +679,7 @@
           receiptImage: exp.receiptImage || '',
           isDoubleExchange: exp.isDoubleExchange || false
         });
-        setShowAddExpense(true);
+        setActiveExpenseSection(exp.daySection || (exp.day === 0 ? 'prep' : `day_${exp.day}`));
       };
 
       const handleDeleteExpenseItem = (exp) => {
@@ -892,10 +908,89 @@
 
       const statsData = getCategoryExpenseStats();
 
+      // 💡 재사용할 인라인 지출 입력 폼 컴포넌트
+      const renderExpenseFormInline = () => (
+        <div className="bg-indigo-50/80 p-4 rounded-2xl shadow-inner space-y-3 text-xs border border-indigo-200 my-2">
+          <div className="font-black text-xs text-indigo-900 border-b border-indigo-200 pb-2 flex justify-between items-center">
+            <span>{editingExpenseId ? '✏️ 지출 내역 수정' : '💵 새 지출 입력'}</span>
+            <button onClick={() => setActiveExpenseSection(null)} className="text-slate-400 font-bold">✕ 닫기</button>
+          </div>
+          
+          <div className="relative">
+            <input 
+              type="text" 
+              placeholder="지출 항목명 (예: 이치란 라멘)" 
+              value={newExpense.title} 
+              onChange={e => setNewExpense({...newExpense, title: e.target.value})} 
+              className="w-full p-2.5 rounded-xl bg-white font-bold border-0 shadow-sm focus:ring-2 focus:ring-indigo-500" 
+            />
+            {filteredSpotAutoComplete.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl z-30 max-h-32 overflow-y-auto divide-y">
+                {filteredSpotAutoComplete.map((spotName, idx) => (
+                  <div 
+                    key={idx} 
+                    onClick={() => setNewExpense({...newExpense, title: spotName})}
+                    className="p-2.5 text-xs font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer flex items-center justify-between"
+                  >
+                    <span>📍 {spotName}</span>
+                    <span className="text-[10px] text-slate-400 font-normal">동선 연동</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <select value={newExpense.category} onChange={e => setNewExpense({...newExpense, category: e.target.value})} className="p-2.5 rounded-xl bg-white font-bold w-1/3 border-0 shadow-sm">
+              <option value="식비">🍽️ 식비</option><option value="교통">🚊 교통</option><option value="쇼핑">🛍️ 쇼핑</option><option value="관광">🏛️ 관광</option><option value="기타">📌 기타</option>
+            </select>
+            <input type="number" placeholder={`금액 (${selectedCountry.currency})`} value={newExpense.amountLocal} onChange={e => handleCleanZeroInput(e.target.value, (val) => setNewExpense({...newExpense, amountLocal: val}))} className="p-2.5 rounded-xl bg-white w-2/3 border-0 font-bold shadow-sm" />
+          </div>
+
+          {useDoubleEx && (
+            <label className="flex items-center gap-2 p-2 bg-white rounded-xl font-bold text-indigo-700 cursor-pointer border border-indigo-100">
+              <input type="checkbox" checked={newExpense.isDoubleExchange} onChange={e => setNewExpense({...newExpense, isDoubleExchange: e.target.checked})} className="rounded text-indigo-600" />
+              <span>💱 이중환전(USD 기반) 계산</span>
+            </label>
+          )}
+
+          <input type="number" placeholder="💳 카드 결제 원화 금액 (생략시 환율 자동계산)" value={newExpense.customKrw} onChange={e => handleCleanZeroInput(e.target.value, (val) => setNewExpense({...newExpense, customKrw: val}))} className="w-full p-2.5 rounded-xl bg-white font-bold text-emerald-700 border-0 shadow-sm" />
+
+          <div className="flex gap-2">
+            <select value={newExpense.paymentMethod} onChange={e => setNewExpense({...newExpense, paymentMethod: e.target.value})} className="p-2.5 rounded-xl bg-white font-bold w-1/3 border-0 shadow-sm">
+              <option value="카드">💳 카드</option><option value="현금">💵 현금</option><option value="페이">🟡 페이</option>
+            </select>
+            <input 
+              type="text" 
+              placeholder={newExpense.paymentMethod === '페이' ? "페이 종류 (GLN 등)" : "카드사/명 (트래블월렛 등)"} 
+              value={newExpense.cardName} 
+              onChange={e => setNewExpense({...newExpense, cardName: e.target.value})} 
+              className="p-2.5 rounded-xl bg-white w-2/3 border-0 shadow-sm" 
+            />
+          </div>
+
+          <div className="space-y-1 pt-1">
+            <label className="font-bold text-slate-600 block text-[11px]">🧾 영수증 이미지 첨부</label>
+            <input type="file" accept="image/*" onChange={e => handleFileUpload(e, (name, base64) => setNewExpense({...newExpense, receiptImage: base64}))} className="w-full text-xs p-1.5 rounded-xl bg-white border-0" />
+            {newExpense.receiptImage && (
+              <div className="flex items-center gap-2 mt-1.5">
+                <img src={newExpense.receiptImage} className="h-16 w-16 object-cover rounded-xl shadow-sm" />
+                <button onClick={() => setNewExpense({...newExpense, receiptImage: ''})} className="px-2.5 py-1 bg-red-50 text-red-500 rounded-lg text-xs font-bold">영수증 삭제</button>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => setActiveExpenseSection(null)} className="flex-1 py-2 bg-white rounded-xl font-bold border border-slate-200">취소</button>
+            <button onClick={handleAddExpenseSubmit} className="flex-1 py-2 bg-indigo-600 text-white rounded-xl font-bold shadow-md">저장 완료</button>
+          </div>
+        </div>
+      );
+
       return (
         <div className="max-w-md mx-auto min-h-screen bg-slate-50 shadow-2xl flex flex-col font-sans relative pb-16">
           
-          {/* ==================== 1. 홈 여행 목록 ==================== */}
+          {/* 1. 홈 여행 목록 */}
           {!selectedCountry ? (
             <div className="flex-1 p-5 flex flex-col bg-slate-50">
               <div className="bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-700 text-white p-6 rounded-3xl shadow-xl mb-6 relative overflow-hidden">
@@ -919,7 +1014,6 @@
                   </button>
                 </div>
 
-                {/* 구글 로그인 상태 표시 바 */}
                 <div className="mt-4 pt-3 border-t border-white/20 flex justify-between items-center text-xs">
                   {user ? (
                     <div className="flex items-center justify-between w-full">
@@ -1028,9 +1122,8 @@
             </div>
           ) : (
 
-            /* ==================== 2. 여행 상세 대시보드 ==================== */
+            /* 2. 여행 상세 대시보드 */
             <div className="flex-1 flex flex-col h-full">
-              {/* 상단 헤더 */}
               <header className="bg-indigo-600 text-white p-3.5 flex justify-between items-center shadow sticky top-0 z-20">
                 <button onClick={() => setSelectedCountry(null)} className="text-xs bg-white/20 px-2.5 py-1.5 rounded-lg font-bold">🏠 목록으로</button>
                 <div className="text-center">
@@ -1227,7 +1320,7 @@
                   </div>
                 )}
 
-                {/* 💰 [3] 가계부 */}
+                {/* 💰 [3] 가계부 (인라인 입력 폼 적용) */}
                 {activeTab === 'expenses' && (
                   <div className="space-y-4">
                     <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-5 rounded-3xl shadow-md">
@@ -1275,87 +1368,15 @@
                       )}
                     </div>
 
-                    {showAddExpense && (
-                      <div className="bg-white p-4 rounded-3xl shadow-lg space-y-3 text-xs relative border-2 border-emerald-500">
-                        <div className="font-black text-sm text-slate-900 border-b pb-2">{editingExpenseId ? '✏️ 지출 내역 수정' : '💵 새 지출 등록'}</div>
-                        
-                        <div className="relative">
-                          <input 
-                            type="text" 
-                            placeholder="지출 항목명 (예: 이치란 라멘)" 
-                            value={newExpense.title} 
-                            onChange={e => setNewExpense({...newExpense, title: e.target.value})} 
-                            className="w-full p-2.5 rounded-xl bg-slate-50 font-bold border-0 focus:ring-2 focus:ring-indigo-500" 
-                          />
-                          {filteredSpotAutoComplete.length > 0 && (
-                            <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl z-30 max-h-32 overflow-y-auto divide-y">
-                              {filteredSpotAutoComplete.map((spotName, idx) => (
-                                <div 
-                                  key={idx} 
-                                  onClick={() => setNewExpense({...newExpense, title: spotName})}
-                                  className="p-2.5 text-xs font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer flex items-center justify-between"
-                                >
-                                  <span>📍 {spotName}</span>
-                                  <span className="text-[10px] text-slate-400 font-normal">동선 장소 연동</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex gap-2">
-                          <select value={newExpense.category} onChange={e => setNewExpense({...newExpense, category: e.target.value})} className="p-2.5 rounded-xl bg-slate-50 font-bold w-1/3 border-0">
-                            <option value="식비">🍽️ 식비</option><option value="교통">🚊 교통</option><option value="쇼핑">🛍️ 쇼핑</option><option value="관광">🏛️ 관광</option><option value="기타">📌 기타</option>
-                          </select>
-                          <input type="number" placeholder={`금액 (${selectedCountry.currency})`} value={newExpense.amountLocal} onChange={e => handleCleanZeroInput(e.target.value, (val) => setNewExpense({...newExpense, amountLocal: val}))} className="p-2.5 rounded-xl bg-slate-50 w-2/3 border-0 font-bold" />
-                        </div>
-
-                        {useDoubleEx && (
-                          <label className="flex items-center gap-2 p-2.5 bg-indigo-50 rounded-xl font-bold text-indigo-700 cursor-pointer">
-                            <input type="checkbox" checked={newExpense.isDoubleExchange} onChange={e => setNewExpense({...newExpense, isDoubleExchange: e.target.checked})} className="rounded text-indigo-600" />
-                            <span>💱 이 지출은 이중환전(USD 기반)으로 계산</span>
-                          </label>
-                        )}
-
-                        <input type="number" placeholder="💳 실제 카드 결제 원화 금액 (KRW - 생략시 환율 계산)" value={newExpense.customKrw} onChange={e => handleCleanZeroInput(e.target.value, (val) => setNewExpense({...newExpense, customKrw: val}))} className="w-full p-2.5 rounded-xl bg-slate-50 font-bold text-emerald-700 border-0" />
-
-                        <div className="flex gap-2">
-                          <select value={newExpense.paymentMethod} onChange={e => setNewExpense({...newExpense, paymentMethod: e.target.value})} className="p-2.5 rounded-xl bg-slate-50 font-bold w-1/3 border-0">
-                            <option value="카드">💳 카드</option><option value="현금">💵 현금</option><option value="페이">🟡 페이</option>
-                          </select>
-                          <input 
-                            type="text" 
-                            placeholder={newExpense.paymentMethod === '페이' ? "페이 종류 (예: GLN, 카카오페이)" : "카드사/카드명 (예: 트래블월렛)"} 
-                            value={newExpense.cardName} 
-                            onChange={e => setNewExpense({...newExpense, cardName: e.target.value})} 
-                            className="p-2.5 rounded-xl bg-slate-50 w-2/3 border-0" 
-                          />
-                        </div>
-
-                        <div className="space-y-1 pt-1">
-                          <label className="font-bold text-slate-600 block text-[11px]">🧾 영수증 이미지 첨부</label>
-                          <input type="file" accept="image/*" onChange={e => handleFileUpload(e, (name, base64) => setNewExpense({...newExpense, receiptImage: base64}))} className="w-full text-xs p-1.5 rounded-xl bg-slate-50 border-0" />
-                          {newExpense.receiptImage && (
-                            <div className="flex items-center gap-2 mt-1.5">
-                              <img src={newExpense.receiptImage} className="h-16 w-16 object-cover rounded-xl shadow-sm" />
-                              <button onClick={() => setNewExpense({...newExpense, receiptImage: ''})} className="px-2.5 py-1 bg-red-50 text-red-500 rounded-lg text-xs font-bold">영수증 삭제</button>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex gap-2 pt-2">
-                          <button onClick={() => setShowAddExpense(false)} className="flex-1 py-2.5 bg-slate-100 rounded-xl font-bold">취소</button>
-                          <button onClick={handleAddExpenseSubmit} className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl font-bold shadow-md">저장</button>
-                        </div>
-                      </div>
-                    )}
-
                     <div className="space-y-3.5">
+                      {/* ✈️ 여행준비 지출 섹션 */}
                       {(() => {
                         const prepExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === 'prep' || e.day === 0));
                         const prepSummary = getExpenseGroupSummary(prepExpenses);
+                        const isFormActive = activeExpenseSection === 'prep';
+
                         return (
-                          <div className="bg-white rounded-3xl shadow-sm overflow-hidden">
+                          <div className="bg-white rounded-3xl shadow-sm overflow-hidden border border-slate-100">
                             <div className="bg-indigo-50/70 p-3.5 flex justify-between items-center">
                               <div>
                                 <span className="font-black text-xs text-indigo-900">✈️ 여행준비 지출</span>
@@ -1363,10 +1384,17 @@
                                   소계: ₩ {prepSummary.totalKrw.toLocaleString()} 원 ({prepSummary.totalLocal.toLocaleString()} {selectedCountry.currency})
                                 </span>
                               </div>
-                              <button onClick={() => { setEditingExpenseId(null); setNewExpense({ daySection: 'prep', day: 0, title: '', amountLocal: '', customKrw: '', category: '기타', paymentMethod: '카드', cardName: '', receiptImage: '', isDoubleExchange: false }); setShowAddExpense(true); }} className="text-[11px] font-bold text-indigo-600 bg-white px-2.5 py-1 rounded-xl shadow-sm">
+                              <button 
+                                onClick={() => openAddExpenseForm('prep', 0)} 
+                                className="text-[11px] font-bold text-indigo-600 bg-white px-2.5 py-1 rounded-xl shadow-sm hover:bg-indigo-100"
+                              >
                                 + 추가
                               </button>
                             </div>
+
+                            {/* 해당 카드 안에서 입력창 오픈 */}
+                            {isFormActive && renderExpenseFormInline()}
+
                             <div>
                               {prepExpenses.map(exp => (
                                 <SwipeableCard 
@@ -1399,12 +1427,15 @@
                         );
                       })()}
 
+                      {/* Day 1 ~ Day N 지출 섹션 */}
                       {Array.from({ length: calculateTotalDays(selectedCountry.startDate, selectedCountry.endDate) }, (_, i) => i + 1).map(dayNum => {
-                        const dayExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === `day_${dayNum}` || e.day === dayNum));
+                        const sectionKey = `day_${dayNum}`;
+                        const dayExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === sectionKey || e.day === dayNum));
                         const daySummary = getExpenseGroupSummary(dayExpenses);
+                        const isFormActive = activeExpenseSection === sectionKey;
 
                         return (
-                          <div key={dayNum} className="bg-white rounded-3xl shadow-sm overflow-hidden">
+                          <div key={dayNum} className="bg-white rounded-3xl shadow-sm overflow-hidden border border-slate-100">
                             <div className="bg-slate-100/70 p-3.5 flex justify-between items-center">
                               <div>
                                 <span className="font-black text-xs text-slate-800">Day {dayNum} ({getDateForDay(selectedCountry.startDate, dayNum)})</span>
@@ -1412,14 +1443,20 @@
                                   소계: ₩ {daySummary.totalKrw.toLocaleString()} 원 ({daySummary.totalLocal.toLocaleString()} {selectedCountry.currency})
                                 </span>
                               </div>
-                              <button onClick={() => { setEditingExpenseId(null); setNewExpense({ daySection: `day_${dayNum}`, day: dayNum, title: '', amountLocal: '', customKrw: '', category: '식비', paymentMethod: '카드', cardName: '', receiptImage: '', isDoubleExchange: false }); setShowAddExpense(true); }} className="text-[11px] font-bold text-emerald-600 bg-white px-2.5 py-1 rounded-xl shadow-sm">
+                              <button 
+                                onClick={() => openAddExpenseForm(sectionKey, dayNum)} 
+                                className="text-[11px] font-bold text-emerald-600 bg-white px-2.5 py-1 rounded-xl shadow-sm hover:bg-emerald-50"
+                              >
                                 + 추가
                               </button>
                             </div>
 
+                            {/* 해당 Day 카드 안에서 입력창 오픈 */}
+                            {isFormActive && renderExpenseFormInline()}
+
                             <div>
                               {dayExpenses.length === 0 ? (
-                                <div className="p-4 text-xs text-slate-300 text-center font-medium">등록된 지출이 없습니다.</div>
+                                !isFormActive && <div className="p-4 text-xs text-slate-300 text-center font-medium">등록된 지출이 없습니다.</div>
                               ) : (
                                 dayExpenses.map(exp => (
                                   <SwipeableCard 
@@ -1498,7 +1535,6 @@
 
               </main>
 
-              {/* 하단 탭 바 */}
               <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t flex justify-around items-center py-2 z-30 shadow-lg">
                 {[
                   { id: 'home', label: '홈', icon: '🏠' },
