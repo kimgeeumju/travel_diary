@@ -224,8 +224,8 @@
 
       // 가계부
       const [expenses, setExpenses] = useLocalStorage('travel_app_expenses', []);
-      const [activeExpenseSection, setActiveExpenseSection] = useState(null);
-      const [editingExpenseId, setEditingExpenseId] = useState(null);
+      const [activeExpenseSection, setActiveExpenseSection] = useState(null); // 'prep', 'day_1' 등 (신규 입력용)
+      const [editingExpenseId, setEditingExpenseId] = useState(null); // 항목 바로 아래 개별 수정용 ID
       const [editingExpenseOrderSpotId, setEditingExpenseOrderSpotId] = useState(null);
       const [newExpense, setNewExpense] = useState({
         daySection: 'day_1', day: 1, title: '', amountLocal: '', customKrw: '', category: '식비', subCategory: '식사(일반)', paymentMethod: '카드', cardName: '', receiptImage: '', excludeFromStats: false, isDoubleExItem: false
@@ -369,7 +369,6 @@
         return d.toISOString().slice(0, 10);
       };
 
-      // 이중환전 계산기 (원-현지화폐 1단위당 가치)
       const getCalculatedDoubleRate = () => {
         const usdVal = Number(usdLocal);
         const krwVal = Number(krwUsd);
@@ -377,7 +376,6 @@
         return (krwVal / usdVal).toFixed(2);
       };
 
-      // 핵심 지출 계산 알고리즘: isDoubleExItem이 true인 항목만 이중환율 계산!
       const calcKrw = (item) => {
         if (item.customKrw) return Number(item.customKrw);
         const amt = Number(item.amountLocal || 0);
@@ -389,7 +387,6 @@
           return Math.round(amt * doubleRate);
         }
         
-        // 이중환전 체크가 안되어있으면 기본 환율 적용
         return Math.round(amt * (customBaseRate || 0));
       };
 
@@ -728,6 +725,7 @@
       };
 
       const handleEditExpense = (exp) => {
+        setActiveExpenseSection(null); // 신규 작성 폼 닫기
         setEditingExpenseId(exp.id);
         const sectionKey = exp.daySection || (exp.day === 0 ? 'prep' : `day_${exp.day}`);
         setNewExpense({
@@ -744,7 +742,6 @@
           excludeFromStats: exp.excludeFromStats || false,
           isDoubleExItem: exp.isDoubleExItem || false
         });
-        setActiveExpenseSection(sectionKey);
       };
 
       const handleAddExpenseSubmit = () => {
@@ -1059,14 +1056,15 @@
       const statsData = getCategoryExpenseStats();
       const currentCountryVouchers = selectedCountry ? vouchers.filter(v => v.countryId === selectedCountry.id) : [];
 
-      const renderExpenseFormInline = () => {
+      // 지출 양식 렌더 함수
+      const renderExpenseFormInline = (onClose) => {
         const subOptions = SUB_CATEGORIES_MAP[newExpense.category] || ['일반'];
 
         return (
           <div className="bg-indigo-50/90 p-4 rounded-2xl shadow-inner space-y-3 text-xs border border-indigo-200 my-2">
             <div className="font-black text-xs text-indigo-900 border-b border-indigo-200 pb-2 flex justify-between items-center">
               <span>{editingExpenseId ? '✏️ 지출 내역 수정' : '💵 새 지출 입력'}</span>
-              <button onClick={() => setActiveExpenseSection(null)} className="text-slate-400 font-bold">✕ 닫기</button>
+              <button onClick={onClose} className="text-slate-400 font-bold">✕ 닫기</button>
             </div>
             
             <div className="relative">
@@ -1190,7 +1188,7 @@
             </div>
 
             <div className="flex gap-2 pt-1">
-              <button onClick={() => setActiveExpenseSection(null)} className="flex-1 py-2 bg-white rounded-xl font-bold border border-slate-200">취소</button>
+              <button onClick={onClose} className="flex-1 py-2 bg-white rounded-xl font-bold border border-slate-200">취소</button>
               <button onClick={handleAddExpenseSubmit} className="flex-1 py-2 bg-indigo-600 text-white rounded-xl font-bold shadow-md">저장 완료</button>
             </div>
           </div>
@@ -1592,7 +1590,7 @@
                         </label>
                       </div>
 
-                      {/* 기본 환율 입력 (항상 표기 및 수정 가능) */}
+                      {/* 기본 환율 입력 */}
                       <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                         <span className="font-bold text-slate-700 text-[11px]">
                           기본 환율 (1 {selectedCountry.currency} 당 원화):
@@ -1605,7 +1603,7 @@
                         />
                       </div>
 
-                      {/* 이중환전 모드가 켜진 경우에만 이중환전 설정 필드 및 결과 문구 표기 */}
+                      {/* 이중환전 모드가 켜진 경우 이중환전 설정 필드 및 문구 표기 */}
                       {useDoubleEx && (
                         <div className="space-y-3 pt-1 border-t">
                           <div className="bg-indigo-50/70 p-3 rounded-xl border border-indigo-200 space-y-2">
@@ -1632,7 +1630,6 @@
                             </div>
                           </div>
 
-                          {/* 이중환전 계산 문구 (이중환전 모드 켜졌을 때 환율 밑에 1회 표기) */}
                           <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-200 text-emerald-900 font-bold text-[11px] shadow-sm">
                             원-현지화폐로 계산했을때 <span className="text-emerald-700 font-black underline text-xs">{getCalculatedDoubleRate()}</span>의 가치를 가집니다.
                           </div>
@@ -1645,7 +1642,7 @@
                       {(() => {
                         const prepExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === 'prep' || e.day === 0));
                         const prepSummary = getExpenseGroupSummary(prepExpenses);
-                        const isFormActive = activeExpenseSection === 'prep';
+                        const isNewFormActive = activeExpenseSection === 'prep';
 
                         return (
                           <div className="bg-white rounded-3xl shadow-sm overflow-hidden border border-slate-100">
@@ -1659,12 +1656,14 @@
                               <button onClick={() => openAddExpenseForm('prep', 0)} className="text-[11px] font-bold text-indigo-600 bg-white px-2.5 py-1 rounded-xl shadow-sm">+ 추가</button>
                             </div>
 
-                            {isFormActive && renderExpenseFormInline()}
+                            {/* 신규 등록 폼 */}
+                            {isNewFormActive && renderExpenseFormInline(() => setActiveExpenseSection(null))}
 
                             <div>
                               {prepExpenses.map(exp => {
                                 const paymentLabel = exp.cardName ? `${exp.paymentMethod || '카드'}(${exp.cardName})` : (exp.paymentMethod || '카드');
                                 const isEditingOrder = editingExpenseOrderSpotId === exp.id;
+                                const isEditingThisExpense = editingExpenseId === exp.id;
 
                                 return (
                                   <div 
@@ -1725,6 +1724,9 @@
                                         )}
                                       </div>
                                     </SwipeableCard>
+
+                                    {/* 해당 항목 바로 밑에 수정 양식 표시 */}
+                                    {isEditingThisExpense && renderExpenseFormInline(() => setEditingExpenseId(null))}
                                   </div>
                                 );
                               })}
@@ -1738,7 +1740,7 @@
                         const sectionKey = `day_${dayNum}`;
                         const dayExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === sectionKey || e.day === dayNum));
                         const daySummary = getExpenseGroupSummary(dayExpenses);
-                        const isFormActive = activeExpenseSection === sectionKey;
+                        const isNewFormActive = activeExpenseSection === sectionKey;
 
                         return (
                           <div key={dayNum} className="bg-white rounded-3xl shadow-sm overflow-hidden border border-slate-100">
@@ -1752,12 +1754,14 @@
                               <button onClick={() => openAddExpenseForm(sectionKey, dayNum)} className="text-[11px] font-bold text-emerald-600 bg-white px-2.5 py-1 rounded-xl shadow-sm">+ 추가</button>
                             </div>
 
-                            {isFormActive && renderExpenseFormInline()}
+                            {/* 신규 등록 폼 */}
+                            {isNewFormActive && renderExpenseFormInline(() => setActiveExpenseSection(null))}
 
                             <div>
                               {dayExpenses.map(exp => {
                                 const paymentLabel = exp.cardName ? `${exp.paymentMethod || '카드'}(${exp.cardName})` : (exp.paymentMethod || '카드');
                                 const isEditingOrder = editingExpenseOrderSpotId === exp.id;
+                                const isEditingThisExpense = editingExpenseId === exp.id;
 
                                 return (
                                   <div 
@@ -1818,6 +1822,9 @@
                                         )}
                                       </div>
                                     </SwipeableCard>
+
+                                    {/* 해당 항목 바로 밑에 수정 양식 표시 */}
+                                    {isEditingThisExpense && renderExpenseFormInline(() => setEditingExpenseId(null))}
                                   </div>
                                 );
                               })}
@@ -2168,7 +2175,7 @@
                 </div>
               )}
 
-              {/* 📍 장소 상세 보기 팝업 */}
+              {/* 📍 장소 상세 보기 팝업 (수정 모드 입력 필드 순서와 100% 동일하게 배치) */}
               {viewSpotDetail && (
                 <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
                   <div className="flex justify-between items-center pb-3 border-b">
@@ -2196,6 +2203,7 @@
                       </div>
                     )}
 
+                    {/* 수정 양식 순서 그대로 반영: 1. 대표 이미지 */}
                     {viewSpotDetail.image && (
                       <div className="space-y-1">
                         <span className="text-xs font-bold text-slate-500 block">🖼️ 1. 대표 이미지</span>
@@ -2203,6 +2211,7 @@
                       </div>
                     )}
 
+                    {/* 수정 양식 순서 그대로 반영: 2. 메뉴판 / 안내판 이미지 */}
                     {viewSpotDetail.menuImage && (
                       <div className="space-y-1">
                         <span className="text-xs font-bold text-slate-500 block">📜 2. 메뉴판 / 안내판 이미지</span>
@@ -2210,15 +2219,17 @@
                       </div>
                     )}
 
+                    {/* 수정 양식 순서 그대로 반영: 3. 참고 블로그 / 웹 링크 URL */}
                     {viewSpotDetail.blogUrl && (
                       <div className="bg-indigo-50/50 p-3.5 rounded-2xl border border-indigo-100 space-y-1">
-                        <span className="text-xs font-bold text-indigo-700 block">🔗 3. 참고 블로그 / 링크</span>
+                        <span className="text-xs font-bold text-indigo-700 block">🔗 3. 참고 블로그 / 웹 링크 URL</span>
                         <a href={viewSpotDetail.blogUrl.startsWith('http') ? viewSpotDetail.blogUrl : `https://${viewSpotDetail.blogUrl}`} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 font-bold underline block truncate">
                           {viewSpotDetail.blogUrl} ➔
                         </a>
                       </div>
                     )}
 
+                    {/* 수정 양식 순서 그대로 반영: 4. 픽한 메뉴 & 참고 메모 */}
                     {viewSpotDetail.menuMemo && (
                       <div className="bg-slate-50 p-3.5 rounded-2xl border space-y-1">
                         <span className="text-xs font-bold text-slate-500 block">📝 4. 픽한 메뉴 & 참고 메모</span>
@@ -2420,7 +2431,12 @@
 
                   <div className="space-y-3 pt-2">
                     {itinerary.filter(i => i.countryId === selectedCountry.id && !i.inItinerary && (wishCategoryTab === 'shopping' ? i.wishType === 'shopping' : i.wishType !== 'shopping')).map(spot => (
-                      <SwipeableCard key={spot.id} onEdit={() => setFullAddSpot(spot)} onDelete={() => handleDeleteItinerarySpot(spot)} onClickContent={() => setViewSpotDetail(spot)}>
+                      <SwipeableCard 
+                        key={spot.id} 
+                        onEdit={() => setFullAddSpot(spot)} 
+                        onDelete={() => handleDeleteItinerarySpot(spot)} 
+                        onClickContent={() => setViewSpotDetail(spot)}
+                      >
                         <div className="flex justify-between items-center text-xs">
                           <span className="font-bold text-slate-800 text-sm">{spot.name}</span>
                           {spot.plannedBudget && <span className="text-emerald-600 font-bold">₩ {calcPlannedKrw(spot.plannedBudget).toLocaleString()} 원</span>}
