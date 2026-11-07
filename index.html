@@ -218,14 +218,14 @@
 
       // 환율 설정
       const [useDoubleEx, setUseDoubleEx] = useLocalStorage('travel_app_use_double_ex', false);
-      const [customBaseRate, setCustomBaseRate] = useState(38); // 기본: 1 현지화폐당 원화
-      const [krwUsd, setKrwUsd] = useLocalStorage('travel_app_krw_usd', 1350); // 원화-달러 환율
-      const [usdLocal, setUsdLocal] = useLocalStorage('travel_app_usd_local', 35); // 달러-현지화폐 환율
+      const [customBaseRate, setCustomBaseRate] = useState(38);
+      const [krwUsd, setKrwUsd] = useLocalStorage('travel_app_krw_usd', 1350);
+      const [usdLocal, setUsdLocal] = useLocalStorage('travel_app_usd_local', 35);
 
       // 가계부
       const [expenses, setExpenses] = useLocalStorage('travel_app_expenses', []);
-      const [activeExpenseSection, setActiveExpenseSection] = useState(null); // 'prep', 'day_1' 등 (신규 입력용)
-      const [editingExpenseId, setEditingExpenseId] = useState(null); // 항목 바로 아래 개별 수정용 ID
+      const [activeExpenseSection, setActiveExpenseSection] = useState(null);
+      const [editingExpenseId, setEditingExpenseId] = useState(null);
       const [editingExpenseOrderSpotId, setEditingExpenseOrderSpotId] = useState(null);
       const [newExpense, setNewExpense] = useState({
         daySection: 'day_1', day: 1, title: '', amountLocal: '', customKrw: '', category: '식비', subCategory: '식사(일반)', paymentMethod: '카드', cardName: '', receiptImage: '', excludeFromStats: false, isDoubleExItem: false
@@ -290,6 +290,75 @@
       // 위시리스트
       const [showWishModal, setShowWishModal] = useState(false);
       const [wishCategoryTab, setWishCategoryTab] = useState('place');
+
+      // 📦 JSON 백업 & 복구 실행 함수
+      const exportBackupJSON = () => {
+        const backupData = {
+          version: '1.0',
+          exportDate: new Date().toISOString(),
+          countries,
+          expenses,
+          itinerary,
+          diaries,
+          spots,
+          flights,
+          hotels,
+          vouchers,
+          tips
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+        const downloadAnchor = document.createElement('a');
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", `travel_log_backup_${new Date().toISOString().slice(0, 10)}.json`);
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+      };
+
+      const importBackupJSON = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const imported = JSON.parse(e.target.result);
+            if (!imported.countries) {
+              alert("올바른 백업 파일(JSON) 형식이 아닙니다.");
+              return;
+            }
+            if (confirm("백업 파일의 데이터를 불러오시겠습니까? 기존 데이터에 병합/덮어쓰기가 진행됩니다.")) {
+              if (imported.countries) setCountries(imported.countries);
+              if (imported.expenses) setExpenses(imported.expenses);
+              if (imported.itinerary) setItinerary(imported.itinerary);
+              if (imported.diaries) setDiaries(imported.diaries);
+              if (imported.spots) setSpots(imported.spots);
+              if (imported.flights) setFlights(imported.flights);
+              if (imported.hotels) setHotels(imported.hotels);
+              if (imported.vouchers) setVouchers(imported.vouchers);
+              if (imported.tips) setTips(imported.tips);
+
+              const allData = {
+                countries: imported.countries || [],
+                expenses: imported.expenses || [],
+                itinerary: imported.itinerary || [],
+                diaries: imported.diaries || [],
+                spots: imported.spots || [],
+                flights: imported.flights || [],
+                hotels: imported.hotels || [],
+                vouchers: imported.vouchers || [],
+                tips: imported.tips || []
+              };
+
+              syncToCloud(allData);
+              alert("백업 데이터 복구가 완료되었습니다!");
+            }
+          } catch (err) {
+            alert("파일을 읽는 도중 오류가 발생했습니다.");
+          }
+        };
+        reader.readAsText(file);
+      };
 
       useEffect(() => {
         const initFB = () => {
@@ -725,7 +794,7 @@
       };
 
       const handleEditExpense = (exp) => {
-        setActiveExpenseSection(null); // 신규 작성 폼 닫기
+        setActiveExpenseSection(null);
         setEditingExpenseId(exp.id);
         const sectionKey = exp.daySection || (exp.day === 0 ? 'prep' : `day_${exp.day}`);
         setNewExpense({
@@ -1136,7 +1205,6 @@
               />
             </div>
 
-            {/* 이중환전 개별 적용 옵션 체크박스 */}
             {useDoubleEx && (
               <label className="flex items-center gap-2 p-2.5 bg-indigo-100/70 rounded-xl font-bold text-indigo-900 cursor-pointer border border-indigo-200 shadow-sm">
                 <input 
@@ -1237,6 +1305,20 @@
                       <button onClick={handleGoogleLogin} className="bg-white text-indigo-700 text-[10px] px-2.5 py-1 rounded-lg font-extrabold shadow shrink-0">Google 로그인</button>
                     </div>
                   )}
+                </div>
+              </div>
+
+              {/* 📦 백업 & 복구 바 */}
+              <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm mb-4 flex items-center justify-between text-xs">
+                <span className="font-bold text-slate-700 text-[11px]">💾 데이터 수동 저장/복구</span>
+                <div className="flex gap-2">
+                  <button onClick={exportBackupJSON} className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 rounded-xl font-bold border border-indigo-200 shadow-sm hover:bg-indigo-100">
+                    📥 백업 파일 저장
+                  </button>
+                  <label className="px-2.5 py-1.5 bg-slate-100 text-slate-700 rounded-xl font-bold border border-slate-200 shadow-sm hover:bg-slate-200 cursor-pointer">
+                    📤 불러오기
+                    <input type="file" accept=".json" onChange={importBackupJSON} className="hidden" />
+                  </label>
                 </div>
               </div>
 
@@ -1575,7 +1657,6 @@
                       <div className="text-xs text-emerald-100 font-semibold mt-0.5">({countryExpenseSummary.totalLocal.toLocaleString()} {selectedCountry.currency})</div>
                     </div>
 
-                    {/* 환율 설정 및 이중환전 모드 설정 섹션 */}
                     <div className="bg-white p-4 rounded-2xl shadow-sm text-xs space-y-3 border border-slate-200">
                       <div className="flex justify-between items-center border-b pb-2">
                         <span className="font-black text-slate-800 text-sm">💱 환율 설정</span>
@@ -1590,7 +1671,6 @@
                         </label>
                       </div>
 
-                      {/* 기본 환율 입력 */}
                       <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                         <span className="font-bold text-slate-700 text-[11px]">
                           기본 환율 (1 {selectedCountry.currency} 당 원화):
@@ -1603,7 +1683,6 @@
                         />
                       </div>
 
-                      {/* 이중환전 모드가 켜진 경우 이중환전 설정 필드 및 문구 표기 */}
                       {useDoubleEx && (
                         <div className="space-y-3 pt-1 border-t">
                           <div className="bg-indigo-50/70 p-3 rounded-xl border border-indigo-200 space-y-2">
@@ -1638,7 +1717,6 @@
                     </div>
 
                     <div className="space-y-3.5">
-                      {/* 여행준비 지출 섹션 */}
                       {(() => {
                         const prepExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === 'prep' || e.day === 0));
                         const prepSummary = getExpenseGroupSummary(prepExpenses);
@@ -1656,7 +1734,6 @@
                               <button onClick={() => openAddExpenseForm('prep', 0)} className="text-[11px] font-bold text-indigo-600 bg-white px-2.5 py-1 rounded-xl shadow-sm">+ 추가</button>
                             </div>
 
-                            {/* 신규 등록 폼 */}
                             {isNewFormActive && renderExpenseFormInline(() => setActiveExpenseSection(null))}
 
                             <div>
@@ -1681,7 +1758,7 @@
                                             <div className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
                                               <span>{exp.title}</span>
                                               {exp.isDoubleExItem && (
-                                                <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-black">💱</span>
+                                                <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-black">💱 이중환전</span>
                                               )}
                                               {exp.excludeFromStats && (
                                                 <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-black">🙈 통계 생략</span>
@@ -1725,7 +1802,6 @@
                                       </div>
                                     </SwipeableCard>
 
-                                    {/* 해당 항목 바로 밑에 수정 양식 표시 */}
                                     {isEditingThisExpense && renderExpenseFormInline(() => setEditingExpenseId(null))}
                                   </div>
                                 );
@@ -1735,7 +1811,6 @@
                         );
                       })()}
 
-                      {/* Day 1 ~ N 지출 */}
                       {Array.from({ length: calculateTotalDays(selectedCountry.startDate, selectedCountry.endDate) }, (_, i) => i + 1).map(dayNum => {
                         const sectionKey = `day_${dayNum}`;
                         const dayExpenses = expenses.filter(e => e.countryId === selectedCountry.id && (e.daySection === sectionKey || e.day === dayNum));
@@ -1754,7 +1829,6 @@
                               <button onClick={() => openAddExpenseForm(sectionKey, dayNum)} className="text-[11px] font-bold text-emerald-600 bg-white px-2.5 py-1 rounded-xl shadow-sm">+ 추가</button>
                             </div>
 
-                            {/* 신규 등록 폼 */}
                             {isNewFormActive && renderExpenseFormInline(() => setActiveExpenseSection(null))}
 
                             <div>
@@ -1779,7 +1853,7 @@
                                             <div className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
                                               <span>{exp.title}</span>
                                               {exp.isDoubleExItem && (
-                                                <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-black">💱</span>
+                                                <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-black">💱 이중환전</span>
                                               )}
                                               {exp.excludeFromStats && (
                                                 <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-black">🙈 통계 생략</span>
@@ -1823,7 +1897,6 @@
                                       </div>
                                     </SwipeableCard>
 
-                                    {/* 해당 항목 바로 밑에 수정 양식 표시 */}
                                     {isEditingThisExpense && renderExpenseFormInline(() => setEditingExpenseId(null))}
                                   </div>
                                 );
@@ -2175,7 +2248,7 @@
                 </div>
               )}
 
-              {/* 📍 장소 상세 보기 팝업 (수정 모드 입력 필드 순서와 100% 동일하게 배치) */}
+              {/* 📍 장소 상세 보기 팝업 */}
               {viewSpotDetail && (
                 <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
                   <div className="flex justify-between items-center pb-3 border-b">
@@ -2203,7 +2276,6 @@
                       </div>
                     )}
 
-                    {/* 수정 양식 순서 그대로 반영: 1. 대표 이미지 */}
                     {viewSpotDetail.image && (
                       <div className="space-y-1">
                         <span className="text-xs font-bold text-slate-500 block">🖼️ 1. 대표 이미지</span>
@@ -2211,7 +2283,6 @@
                       </div>
                     )}
 
-                    {/* 수정 양식 순서 그대로 반영: 2. 메뉴판 / 안내판 이미지 */}
                     {viewSpotDetail.menuImage && (
                       <div className="space-y-1">
                         <span className="text-xs font-bold text-slate-500 block">📜 2. 메뉴판 / 안내판 이미지</span>
@@ -2219,7 +2290,6 @@
                       </div>
                     )}
 
-                    {/* 수정 양식 순서 그대로 반영: 3. 참고 블로그 / 웹 링크 URL */}
                     {viewSpotDetail.blogUrl && (
                       <div className="bg-indigo-50/50 p-3.5 rounded-2xl border border-indigo-100 space-y-1">
                         <span className="text-xs font-bold text-indigo-700 block">🔗 3. 참고 블로그 / 웹 링크 URL</span>
@@ -2229,7 +2299,6 @@
                       </div>
                     )}
 
-                    {/* 수정 양식 순서 그대로 반영: 4. 픽한 메뉴 & 참고 메모 */}
                     {viewSpotDetail.menuMemo && (
                       <div className="bg-slate-50 p-3.5 rounded-2xl border space-y-1">
                         <span className="text-xs font-bold text-slate-500 block">📝 4. 픽한 메뉴 & 참고 메모</span>
