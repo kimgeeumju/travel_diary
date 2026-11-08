@@ -61,39 +61,42 @@
       '교통': ['대중교통(지하철/버스)', '택시/승차공유', '항공/철도', '렌터카/주유/주차', '페리/선박'],
       '쇼핑': ['기념품/선물', '의류/잡화', '화장품/뷰티', '전자기기', '면세점'],
       '관광': ['입장료/티켓', '투어/체험', '액티비티/공연', '스파/마사지'],
-      '숙박': ['호텔/리조트', '호스텔/게스트하우스', '에어비앤비', '기타숙소'],
-      '기타': ['통신/SIM/포켓파이', '여행자보험', '환전수수료', '잡비/기타']
+      '숙박': ['호텔/리조트', '호스텔/게스트하우스', '에어비앤비', '레지던스'],
+      '기타': ['통신/SIM/포켓파이', '여행자보험', '세탁', '수강료']
     };
 
-    const compressImage = (file, maxWidth = 800, quality = 0.6) => {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = (event) => {
-          const img = new Image();
-          img.src = event.target.result;
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            let width = img.width;
-            let height = img.height;
+// 기존 code: maxWidth = 500, quality = 0.3
+// 수정 code: maxWidth = 400, quality = 0.2 (용량 폭증 방지)
+const compressImage = (file, maxWidth = 400, quality = 0.2) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
 
-            if (width > maxWidth) {
-              height = Math.round((height * maxWidth) / width);
-              width = maxWidth;
-            }
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
 
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, width, height);
-            const dataUrl = canvas.toDataURL('image/jpeg', quality);
-            resolve(dataUrl);
-          };
-          img.onerror = (err) => reject(err);
-        };
-        reader.onerror = (err) => reject(err);
-      });
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      };
+      img.onerror = (err) => reject(err);
     };
+    reader.onerror = (err) => reject(err);
+  });
+};
+
 
     function useLocalStorage(key, initialValue) {
       const [storedValue, setStoredValue] = useState(() => {
@@ -206,6 +209,77 @@
     }
 
     function TravelApp() {
+
+// 일기 중복 체크 팝업 State
+const [diaryConflictPopup, setDiaryConflictPopup] = useState(null);
+
+// 날짜 포맷 (YY.MM.DD) 변환 함수
+const getFormattedDateForDay = (startDateStr, dayNum) => {
+  if (!startDateStr || !dayNum) return '';
+  const d = new Date(startDateStr);
+  d.setDate(d.getDate() + (dayNum - 1));
+  const yy = String(d.getFullYear()).slice(-2);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yy}.${mm}.${dd}`;
+};
+
+// 일기 저장 실행 함수 (중복 체크 및 덧붙이기 지원)
+    // ✅ 이 1개의 handleSaveDiarySubmit 함수만 사용하세요.
+    const handleSaveDiarySubmit = (forceAppend = false) => {
+        if (!fullEditDiary || !fullEditDiary.title) {
+          alert('일기 제목을 입력해 주세요.');
+          return;
+        }
+        const targetCountryId = selectedCountry ? selectedCountry.id : fullEditDiary.countryId;
+        const targetDay = Number(fullEditDiary.day || 1);
+        const formattedDate = getFormattedDateForDay(selectedCountry?.startDate, targetDay);
+ 
+        const existingDiary = diaries.find(d => d.countryId === targetCountryId && d.day === targetDay && d.id !== fullEditDiary.id);
+
+        if (existingDiary && !forceAppend) {
+          setDiaryConflictPopup({ existingDiary });
+          return;
+        }
+
+        let nextDiaries = [...diaries];
+
+        if (existingDiary && forceAppend) {
+          const mergedBlocks = [...existingDiary.blocks, ...fullEditDiary.blocks];
+          const mergedDiary = {
+            ...existingDiary,
+            title: existingDiary.title,
+            createdDate: formattedDate,
+            blocks: mergedBlocks
+          };
+          nextDiaries = nextDiaries.map(d => d.id === existingDiary.id ? mergedDiary : d);
+        } else {
+          // ✅ const 키워드 추가
+          const diaryToSave = { 
+            ...fullEditDiary, 
+            countryId: targetCountryId, 
+            day: targetDay, 
+            createdDate: formattedDate 
+          };
+          const existingIdx = diaries.findIndex(d => d.id === diaryToSave.id);
+          if (existingIdx >= 0) {
+            nextDiaries[existingIdx] = diaryToSave;
+          } else {
+            nextDiaries.push(diaryToSave);
+          }
+        }
+
+        setDiaries(nextDiaries);
+        syncToCloud({ diaries: nextDiaries });
+        setFullEditDiary(null);
+        setDiaryConflictPopup(null);
+      };
+        // 🧳 준비물 체크리스트 State 추가
+      const [packingList, setPackingList] = useLocalStorage('travel_app_packing', []);
+      const [showPackingModal, setShowPackingModal] = useState(false);
+      const [newPackingItem, setNewPackingItem] = useState({ text: '', category: '필수품' });
+
+
       const [user, setUser] = useState(null);
 
       const [countries, setCountries] = useLocalStorage('travel_app_countries', []);
@@ -301,6 +375,7 @@
           expenses,
           itinerary,
           diaries,
+          packingList,
           spots,
           flights,
           hotels,
@@ -316,50 +391,55 @@
         downloadAnchor.remove();
       };
 
-      const importBackupJSON = (event) => {
-        const file = event.target.files[0];
-        if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          try {
-            const imported = JSON.parse(e.target.result);
-            if (!imported.countries) {
-              alert("올바른 백업 파일(JSON) 형식이 아닙니다.");
-              return;
-            }
-            if (confirm("백업 파일의 데이터를 불러오시겠습니까? 기존 데이터에 병합/덮어쓰기가 진행됩니다.")) {
-              if (imported.countries) setCountries(imported.countries);
-              if (imported.expenses) setExpenses(imported.expenses);
-              if (imported.itinerary) setItinerary(imported.itinerary);
-              if (imported.diaries) setDiaries(imported.diaries);
-              if (imported.spots) setSpots(imported.spots);
-              if (imported.flights) setFlights(imported.flights);
-              if (imported.hotels) setHotels(imported.hotels);
-              if (imported.vouchers) setVouchers(imported.vouchers);
-              if (imported.tips) setTips(imported.tips);
+      // 백업 불러오기
+const importBackupJSON = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
 
-              const allData = {
-                countries: imported.countries || [],
-                expenses: imported.expenses || [],
-                itinerary: imported.itinerary || [],
-                diaries: imported.diaries || [],
-                spots: imported.spots || [],
-                flights: imported.flights || [],
-                hotels: imported.hotels || [],
-                vouchers: imported.vouchers || [],
-                tips: imported.tips || []
-              };
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const imported = JSON.parse(e.target.result);
+      if (!imported.countries) {
+        alert("올바른 백업 파일(JSON) 형식이 아닙니다.");
+        return;
+      }
+      if (confirm("백업 파일의 데이터를 불러오시겠습니까? 기존 데이터가 덮어씌워집니다.")) {
+        if (imported.countries) setCountries(imported.countries);
+        if (imported.expenses) setExpenses(imported.expenses);
+        if (imported.itinerary) setItinerary(imported.itinerary);
+        if (imported.diaries) setDiaries(imported.diaries);
+        if (imported.packingList) setPackingList(imported.packingList);
+        if (imported.spots) setSpots(imported.spots);
+        if (imported.flights) setFlights(imported.flights);
+        if (imported.hotels) setHotels(imported.hotels);
+        if (imported.vouchers) setVouchers(imported.vouchers);
+        if (imported.tips) setTips(imported.tips);
 
-              syncToCloud(allData);
-              alert("백업 데이터 복구가 완료되었습니다!");
-            }
-          } catch (err) {
-            alert("파일을 읽는 도중 오류가 발생했습니다.");
-          }
+        const allData = {
+          countries: imported.countries || [],
+          expenses: imported.expenses || [],
+          itinerary: imported.itinerary || [],
+          diaries: imported.diaries || [],
+          packingList: imported.packingList || [],
+          spots: imported.spots || [],
+          flights: imported.flights || [],
+          hotels: imported.hotels || [],
+          vouchers: imported.vouchers || [],
+          tips: imported.tips || []
         };
-        reader.readAsText(file);
-      };
+
+        syncToCloud(allData);
+        alert("백업 데이터 복구가 완료되었습니다!");
+      }
+    } catch (err) {
+      alert("파일을 읽는 도중 오류가 발생했습니다.");
+    }
+  };
+  reader.readAsText(file);
+};
+
 
       useEffect(() => {
         const initFB = () => {
@@ -383,8 +463,12 @@
             if (data.countries) setCountries(data.countries);
             if (data.expenses) setExpenses(data.expenses);
             if (data.itinerary) setItinerary(data.itinerary);
-            if (data.diaries && data.diaries.length > 0) setDiaries(data.diaries);
-            if (data.spots) setSpots(data.spots);
+            if (data.packingList) setPackingList(data.packingList);
+
+	   if (Array.isArray(data.diaries)) {
+  		setDiaries(data.diaries);
+	    }            
+	    if (data.spots) setSpots(data.spots);
             if (data.flights) setFlights(data.flights);
             if (data.hotels) setHotels(data.hotels);
             if (data.vouchers) setVouchers(data.vouchers);
@@ -541,6 +625,16 @@
         setter(isNaN(num) ? '' : num);
       };
 
+const handleDeleteCountry = (e, countryId, countryName) => {
+  if (e) e.stopPropagation();
+  if (confirm(`'${countryName}' 여행 기록을 삭제하시겠습니까? 관련 지출 및 일정도 모두 삭제됩니다.`)) {
+    const nextCountries = countries.filter(c => c.id !== countryId);
+    setCountries(nextCountries);
+    syncToCloud({ countries: nextCountries });
+    if (selectedCountry?.id === countryId) setSelectedCountry(null);
+  }
+};
+
       const handleOpenEditCountry = (e, country) => {
         if (e) e.stopPropagation();
         setEditingCountryId(country.id);
@@ -555,56 +649,39 @@
         setShowAddCountry(true);
       };
 
-      const handleCreateOrUpdateCountry = () => {
-        if (!newCountryInput.name || !newCountryInput.startDate || !newCountryInput.endDate) {
-          alert('여행지 이름과 날짜를 입력해 주세요.');
-          return;
-        }
 
-        const detectedFlag = newCountryInput.flag && newCountryInput.flag.trim().length > 0 ? newCountryInput.flag : getFlagFromText(newCountryInput.name);
-        const defaultRateVal = newCountryInput.defaultRate ? Number(newCountryInput.defaultRate) : 38;
+// 기존 끊긴 부분 수정
+const handleCreateOrUpdateCountry = () => {
+  if (!newCountryInput.name || !newCountryInput.startDate || !newCountryInput.endDate) {
+    alert('여행지 이름과 날짜를 입력해 주세요.');
+    return;
+  }
+  
+  const detectedFlag = newCountryInput.flag?.trim() || getFlagFromText(newCountryInput.name);
+  const defaultRateVal = newCountryInput.defaultRate ? Number(newCountryInput.defaultRate) : 38;
 
-        let nextCountries = [];
-        if (editingCountryId) {
-          nextCountries = countries.map(c => c.id === editingCountryId ? {
-            ...c,
-            name: newCountryInput.name,
-            flag: detectedFlag,
-            currency: newCountryInput.currency || 'USD',
-            startDate: newCountryInput.startDate,
-            endDate: newCountryInput.endDate,
-            defaultRate: defaultRateVal
-          } : c);
-          setCountries(nextCountries);
-          if (selectedCountry?.id === editingCountryId) {
-            setSelectedCountry(nextCountries.find(c => c.id === editingCountryId));
-          }
-          setEditingCountryId(null);
-        } else {
-          nextCountries = [...countries, { 
-            ...newCountryInput, 
-            id: Date.now().toString(),
-            flag: detectedFlag,
-            currency: newCountryInput.currency || 'USD',
-            defaultRate: defaultRateVal
-          }];
-          setCountries(nextCountries);
-        }
+  let nextCountries = [];
+  if (editingCountryId) {
+    nextCountries = countries.map(c => c.id === editingCountryId ? {
+      ...c,
+      ...newCountryInput,
+      flag: detectedFlag,
+      defaultRate: defaultRateVal
+    } : c);
+  } else {
+    nextCountries = [...countries, {
+      id: Date.now().toString(),
+      ...newCountryInput,
+      flag: detectedFlag,
+      defaultRate: defaultRateVal
+    }];
+  }
+  setCountries(nextCountries);
+  syncToCloud({ countries: nextCountries });
+  setShowAddCountry(false);
+  setEditingCountryId(null);
+};
 
-        syncToCloud({ countries: nextCountries });
-        setShowAddCountry(false);
-        setNewCountryInput({ name: '', flag: '', currency: '', startDate: '', endDate: '', defaultRate: '' });
-      };
-
-      const handleDeleteCountry = (e, countryId, countryName) => {
-        e.stopPropagation();
-        if (confirm(`'${countryName}' 여행 기록을 삭제하시겠습니까?`)) {
-          const nextCountries = countries.filter(c => c.id !== countryId);
-          setCountries(nextCountries);
-          syncToCloud({ countries: nextCountries });
-          if (selectedCountry?.id === countryId) setSelectedCountry(null);
-        }
-      };
 
       const handleAddDay = () => {
         if (!selectedCountry) return;
@@ -781,7 +858,8 @@
       const handleCompressedFileUpload = async (file, callback) => {
         if (!file) return;
         try {
-          const compressedDataUrl = await compressImage(file, 800, 0.6);
+          // compressImage의 기본 설정값 사용 (maxWidth 400, quality 0.2)
+          const compressedDataUrl = await compressImage(file); 
           callback(file.name, compressedDataUrl);
         } catch (err) {
           const reader = new FileReader();
@@ -789,6 +867,7 @@
           reader.readAsDataURL(file);
         }
       };
+
 
       const openGoogleMaps = (addressName) => {
         if (!addressName) return;
@@ -992,24 +1071,6 @@
         }
       };
 
-      const handleSaveDiarySubmit = () => {
-        if (!fullEditDiary || !fullEditDiary.title) {
-          alert('일기 제목을 입력해 주세요.');
-          return;
-        }
-        const targetCountryId = selectedCountry ? selectedCountry.id : fullEditDiary.countryId;
-        const diaryToSave = { ...fullEditDiary, countryId: targetCountryId };
-        const existingIdx = diaries.findIndex(d => d.countryId === targetCountryId && d.id === diaryToSave.id);
-
-        let nextDiaries = [...diaries];
-        if (existingIdx >= 0) nextDiaries[existingIdx] = diaryToSave;
-        else nextDiaries.push(diaryToSave);
-
-        setDiaries(nextDiaries);
-        syncToCloud({ diaries: nextDiaries });
-        setFullEditDiary(null);
-      };
-
       const handleDeleteDiary = (diaryId) => {
         if (confirm("이 일기를 삭제하시겠습니까?")) {
           const nextDiaries = diaries.filter(d => d.id !== diaryId);
@@ -1024,30 +1085,88 @@
         setFullEditDiary({ ...fullEditDiary, blocks: [...fullEditDiary.blocks, { id: Date.now(), image: '', text: '' }] });
       };
 
-      const handleMultipleDiaryImageUpload = async (e) => {
-        const files = Array.from(e.target.files);
-        if (files.length === 0 || !fullEditDiary) return;
-        try {
-          const compressedImages = await Promise.all(files.map(file => compressImage(file, 800, 0.6)));
-          const newBlocks = compressedImages.map((imgUrl, index) => ({ id: Date.now() + index, image: imgUrl, text: '' }));
-          setFullEditDiary({ ...fullEditDiary, blocks: [...fullEditDiary.blocks, ...newBlocks] });
-        } catch (err) {
-          alert("사진 압축 업로드 중 오류가 발생했습니다.");
-        }
-      };
 
       const handleUpdateDiaryBlock = (blockId, field, val) => {
         setFullEditDiary({ ...fullEditDiary, blocks: fullEditDiary.blocks.map(b => b.id === blockId ? { ...b, [field]: val } : b) });
       };
+      // 🧳 체크리스트 관련 함수들
+const handleAddPackingItem = () => {
+  if (!newPackingItem.text.trim()) return;
+  const item = {
+    id: Date.now(),
+    countryId: selectedCountry.id,
+    text: newPackingItem.text.trim(),
+    category: newPackingItem.category || '필수품',
+    checked: false
+  };
+  const next = [...packingList, item];
+  setPackingList(next);
+  syncToCloud({ packingList: next });
+  setNewPackingItem({ text: '', category: newPackingItem.category });
+};
 
-      const handleMoveDiaryBlock = (index, dir) => {
-        const blocks = [...fullEditDiary.blocks];
-        if ((dir === -1 && index === 0) || (dir === 1 && index === blocks.length - 1)) return;
-        const temp = blocks[index];
-        blocks[index] = blocks[index + dir];
-        blocks[index + dir] = temp;
-        setFullEditDiary({ ...fullEditDiary, blocks });
-      };
+const handleTogglePackingItem = (itemId) => {
+  const next = packingList.map(item => item.id === itemId ? { ...item, checked: !item.checked } : item);
+  setPackingList(next);
+  syncToCloud({ packingList: next });
+};
+
+const handleDeletePackingItem = (itemId) => {
+  const next = packingList.filter(item => item.id !== itemId);
+  setPackingList(next);
+  syncToCloud({ packingList: next });
+};
+
+// 기본 템플릿 한 번에 추가하기
+const handleAddDefaultPackingTemplate = () => {
+  if (!selectedCountry) return;
+  const defaults = [
+    { text: '여권 / 여권 사본', category: '필수품' },
+    { text: '항공권 / 바우처 출력본', category: '필수품' },
+    { text: '신용카드 / 현지 통화(환전)', category: '필수품' },
+    { text: '돼지코 / 멀티어댑터', category: '전자기기' },
+    { text: '보조배터리 / 충전기', category: '전자기기' },
+    { text: '세면도구 / 상비약', category: '의류/위생' }
+  ];
+  const newItems = defaults.map((d, i) => ({
+    id: Date.now() + i,
+    countryId: selectedCountry.id,
+    text: d.text,
+    category: d.category,
+    checked: false
+  }));
+  const next = [...packingList, ...newItems];
+  setPackingList(next);
+  syncToCloud({ packingList: next });
+};
+
+
+
+// ✅ 올바른 코드: 두 함수를 완전히 분리
+const handleMultipleDiaryImageUpload = async (e) => {
+  const files = Array.from(e.target.files);
+  if (files.length === 0 || !fullEditDiary) return;
+  try {
+    const compressedImages = await Promise.all(files.map(file => compressImage(file, 400, 0.2)));
+    const newBlocks = compressedImages.map((imgUrl, index) => ({ id: Date.now() + index, image: imgUrl, text: '' }));
+    setFullEditDiary({ ...fullEditDiary, blocks: [...fullEditDiary.blocks, ...newBlocks] });
+  } catch (err) {
+    alert("사진 첨부 중 오류가 발생했습니다.");
+  }
+};
+
+const handleMoveDiaryBlock = (index, dir) => {
+  const blocks = [...fullEditDiary.blocks];
+  if (
+    (dir === -1 && index === 0) ||
+    (dir === 1 && index === blocks.length - 1)
+  )
+    return;
+  const temp = blocks[index];
+  blocks[index] = blocks[index + dir];
+  blocks[index + dir] = temp;
+  setFullEditDiary({ ...fullEditDiary, blocks });
+};
 
       const handleDeleteDiaryBlock = (blockId) => {
         if (fullEditDiary.blocks.length <= 1) return alert('최소 1개의 블록은 존재해야 합니다.');
@@ -1175,11 +1294,14 @@
                 <label className="text-[10px] font-bold text-slate-500 block mb-1">대분류</label>
                 <select 
                   value={newExpense.category} 
-                  onChange={e => {
-                    const newCat = e.target.value;
-                    const defaultSub = SUB_CATEGORIES_MAP[newCat] ? SUB_CATEGORIES_MAP[newCat][0] : '일반';
-                    setNewExpense({...newExpense, category: newCat, subCategory: defaultSub});
-                  }} 
+              // 올바른 수정:
+              onChange={e => {
+                const newCat = e.target.value;
+                const defaultSub = (SUB_CATEGORIES_MAP[newCat] && SUB_CATEGORIES_MAP[newCat][0]) 
+                  ? SUB_CATEGORIES_MAP[newCat][0] 
+                  : '기타';
+                setNewExpense({...newExpense, category: newCat, subCategory: defaultSub});
+              }}
                   className="w-full p-2.5 rounded-xl bg-white font-bold border-0 shadow-sm"
                 >
                   <option value="식비">🍽️ 식비</option>
@@ -1429,25 +1551,29 @@
                 {/* 🏠 [1] 메인 홈 */}
                 {activeTab === 'home' && (
                   <div className="space-y-4">
-                    <div className="bg-white p-3.5 rounded-2xl border shadow-sm grid grid-cols-5 gap-2 text-center">
-                      <button onClick={() => setShowAirtelModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50">
-                        <span className="text-2xl">🛫</span>
+                    <div className="bg-white p-3.5 rounded-2xl border shadow-sm grid grid-cols-6 gap-1.5 text-center">
+                      <button onClick={() => setShowAirtelModal(true)} className="flex flex-col items-center justify-center p-1.5 rounded-xl hover:bg-slate-50">
+                        <span className="text-xl">🛫</span>
                         <span className="text-[10px] font-bold mt-1 text-slate-700">에어텔</span>
                       </button>
-                      <button onClick={() => setShowVoucherListModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50">
-                        <span className="text-2xl">📄</span>
+                      <button onClick={() => setShowVoucherListModal(true)} className="flex flex-col items-center justify-center p-1.5 rounded-xl hover:bg-slate-50">
+                        <span className="text-xl">📄</span>
                         <span className="text-[10px] font-bold mt-1 text-slate-700">서류함</span>
                       </button>
-                      <button onClick={() => setShowTipListModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50">
-                        <span className="text-2xl">💡</span>
+                      <button onClick={() => setShowPackingModal(true)} className="flex flex-col items-center justify-center p-1.5 rounded-xl hover:bg-slate-50">
+                        <span className="text-xl">🧳</span>
+                        <span className="text-[10px] font-bold mt-1 text-slate-700">체크리스트</span>
+                      </button>
+                      <button onClick={() => setShowTipListModal(true)} className="flex flex-col items-center justify-center p-1.5 rounded-xl hover:bg-slate-50">
+                        <span className="text-xl">💡</span>
                         <span className="text-[10px] font-bold mt-1 text-slate-700">여행 팁</span>
                       </button>
-                      <button onClick={() => setShowWishModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50">
-                        <span className="text-2xl">✨</span>
+                      <button onClick={() => setShowWishModal(true)} className="flex flex-col items-center justify-center p-1.5 rounded-xl hover:bg-slate-50">
+                        <span className="text-xl">✨</span>
                         <span className="text-[10px] font-bold mt-1 text-slate-700">위시</span>
                       </button>
-                      <button onClick={() => setShowStatsModal(true)} className="flex flex-col items-center justify-center p-2 rounded-xl hover:bg-slate-50">
-                        <span className="text-2xl">📊</span>
+                      <button onClick={() => setShowStatsModal(true)} className="flex flex-col items-center justify-center p-1.5 rounded-xl hover:bg-slate-50">
+                        <span className="text-xl">📊</span>
                         <span className="text-[10px] font-bold mt-1 text-slate-700">통계</span>
                       </button>
                     </div>
@@ -1919,36 +2045,56 @@
                   </div>
                 )}
 
-                {/* 📷 [4] 포토 일기 */}
-                {activeTab === 'diaries' && (
-                  <div className="space-y-4">
-                    <button 
-                      onClick={() => setFullEditDiary({ id: Date.now(), countryId: selectedCountry.id, day: 1, createdDate: getDateForDay(selectedCountry.startDate, 1), title: '', blocks: [{ id: Date.now(), image: '', text: '' }] })}
-                      className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow"
-                    >
-                      + 일기 작성하기
-                    </button>
 
-                    <div className="grid grid-cols-2 gap-3 pt-1">
-                      {diaries.filter(d => d.countryId === selectedCountry.id).sort((a, b) => a.day - b.day).map(d => (
-                        <div key={d.id} onClick={() => setFullDiaryModal(d)} className="bg-white rounded-2xl border p-3 shadow-sm cursor-pointer space-y-2 flex flex-col justify-between">
-                          <div className="space-y-1.5">
-                            <div className="flex justify-between items-center">
-                              <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">Day {d.day} ({getDateForDay(selectedCountry.startDate, d.day)})</span>
-                              <button onClick={(e) => { e.stopPropagation(); handleDeleteDiary(d.id); }} className="text-xs text-red-400 font-bold">🗑️</button>
-                            </div>
-                            {d.blocks[0]?.image ? (
-                              <img src={d.blocks[0].image} className="h-28 w-full object-cover rounded-xl" />
-                            ) : (
-                              <div className="h-28 w-full bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 text-xs font-bold">📷 사진없음</div>
-                            )}
-                            <h3 className="font-bold text-sm text-slate-800 line-clamp-1">{d.title}</h3>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+{/* 📷 [4] 포토 일기 */}
+{activeTab === 'diaries' && (
+  <div className="space-y-4">
+    <button 
+      onClick={() => {
+        const targetDay = 1;
+        const formattedDate = getFormattedDateForDay(selectedCountry?.startDate, targetDay);
+        setFullEditDiary({ 
+          id: Date.now(), 
+          countryId: selectedCountry ? selectedCountry.id : '', 
+          day: targetDay, 
+          createdDate: formattedDate, 
+          title: '', 
+          blocks: [{ id: Date.now(), image: '', text: '' }] 
+        });
+      }}
+      className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow"
+    >
+      + 일기 작성하기
+    </button>
+
+    <div className="grid grid-cols-2 gap-3 pt-1">
+      {diaries.filter(d => d.countryId === selectedCountry?.id).sort((a, b) => a.day - b.day).length === 0 ? (
+        <div className="col-span-2 text-center py-8 text-xs text-slate-400 font-bold">
+          등록된 일기가 없습니다. 위 버튼을 눌러 일기를 작성해 보세요!
+        </div>
+      ) : (
+        diaries.filter(d => d.countryId === selectedCountry?.id).sort((a, b) => a.day - b.day).map(d => (
+          <div key={d.id} onClick={() => setFullDiaryModal(d)} className="bg-white rounded-2xl border p-3 shadow-sm cursor-pointer space-y-2 flex flex-col justify-between">
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+                  {d.day}일차 ({d.createdDate || getFormattedDateForDay(selectedCountry?.startDate, d.day)})
+                </span>
+                <button onClick={(e) => { e.stopPropagation(); handleDeleteDiary(d.id); }} className="text-xs text-red-400 font-bold">🗑️</button>
+              </div>
+              {d.blocks && d.blocks[0]?.image ? (
+                <img src={d.blocks[0].image} className="h-28 w-full object-cover rounded-xl" />
+              ) : (
+                <div className="h-28 w-full bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 text-xs font-bold">📷 사진없음</div>
+              )}
+              <h3 className="font-bold text-sm text-slate-800 line-clamp-1">{d.title || '제목 없음'}</h3>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  </div>
+)}
 
               </main>
 
@@ -2065,6 +2211,106 @@
                   </div>
                 </div>
               )}
+
+                            {/* 🧳 여행 준비물 체크리스트 팝업 모달 */}
+              {showPackingModal && (
+                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b">
+                    <div>
+                      <h3 className="font-black text-lg text-slate-800">🧳 짐 싸기 체크리스트</h3>
+                      {selectedCountry && (
+                        <p className="text-xs text-indigo-600 font-bold mt-0.5">
+                      달성률: {(() => {
+                        if (!Array.isArray(packingList) || !selectedCountry) return '0%';
+                        const items = packingList.filter(p => p && p.countryId === selectedCountry.id);
+                        if (items.length === 0) return '0%';
+                        const done = items.filter(i => i && i.checked).length;
+                        return `${Math.round((done / items.length) * 100)}% (${done}/${items.length})`;
+                      })()}
+                        </p>
+                      )}
+                    </div>
+                    <button onClick={() => setShowPackingModal(false)} className="text-slate-400 font-bold text-lg">✕ 닫기</button>
+                  </div>
+
+                  {/* 입력 양식 */}
+                  <div className="space-y-2 bg-slate-50 p-3.5 rounded-2xl border">
+                    <div className="flex gap-2">
+                      <select
+                        value={newPackingItem.category}
+                        onChange={e => setNewPackingItem({ ...newPackingItem, category: e.target.value })}
+                        className="p-2.5 border rounded-xl font-bold text-xs bg-white w-1/3"
+                      >
+                        <option value="필수품">🚨 필수품</option>
+                        <option value="의류/위생">👕 의류/위생</option>
+                        <option value="전자기기">🔌 전자기기</option>
+                        <option value="기타">📌 기타</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="준비물 입력 (예: 보조배터리)"
+                        value={newPackingItem.text}
+                        onChange={e => setNewPackingItem({ ...newPackingItem, text: e.target.value })}
+                        onKeyDown={e => e.key === 'Enter' && handleAddPackingItem()}
+                        className="flex-1 p-2.5 border rounded-xl text-xs font-bold bg-white"
+                      />
+                      <button onClick={handleAddPackingItem} className="px-4 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow">
+                        + 추가
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={handleAddDefaultPackingTemplate}
+                      className="w-full py-2 bg-indigo-50 text-indigo-700 rounded-xl text-[11px] font-bold border border-indigo-200"
+                    >
+                      ✨ 필수 짐 기본 템플릿 한 번에 추가하기
+                    </button>
+                  </div>
+
+                  {/* 목록 출력 */}
+                  <div className="space-y-2 flex-1 pt-1">
+                    {packingList.filter(p => p.countryId === selectedCountry?.id).length === 0 ? (
+                      <div className="text-center py-10 text-xs text-slate-400 font-bold">
+                        등록된 준비물이 없습니다.<br />위 입력창에 항목을 추가하거나 기본 템플릿을 불러와 보세요!
+                      </div>
+                    ) : (
+                      ['필수품', '의류/위생', '전자기기', '기타'].map(cat => {
+                        const catItems = packingList.filter(p => p.countryId === selectedCountry?.id && p.category === cat);
+                        if (catItems.length === 0) return null;
+                        return (
+                          <div key={cat} className="space-y-1.5 pt-1">
+                            <span className="text-xs font-black text-slate-600 block px-1">
+                              {cat === '필수품' ? '🚨 필수품' : cat === '의류/위생' ? '👕 의류 & 위생' : cat === '전자기기' ? '🔌 전자기기' : '📌 기타'}
+                            </span>
+                            <div className="space-y-1">
+                              {catItems.map(item => (
+                                <div key={item.id} className="flex items-center justify-between p-3 bg-white rounded-xl border shadow-sm">
+                                  <label className="flex items-center gap-2.5 cursor-pointer flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.checked}
+                                      onChange={() => handleTogglePackingItem(item.id)}
+                                      className="w-4 h-4 rounded text-indigo-600"
+                                    />
+                                    <span className={`text-xs font-bold ${item.checked ? 'line-through text-slate-400' : 'text-slate-800'}`}>
+                                      {item.text}
+                                    </span>
+                                  </label>
+                                  <button onClick={() => handleDeletePackingItem(item.id)} className="text-xs text-red-400 font-bold p-1">
+                                    🗑️
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+
+
 
               {/* 🧾 영수증 팝업 */}
               {viewReceiptModal && (
@@ -2791,48 +3037,107 @@
                 </div>
               )}
 
-              {/* 일기 작성 모달 */}
-              {fullEditDiary && (
-                <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
-                  <div className="flex justify-between items-center pb-3 border-b">
-                    <h3 className="font-black text-lg text-slate-800">📷 블록형 포토 일기 작성</h3>
-                    <button onClick={() => setFullEditDiary(null)} className="text-slate-400 font-bold">✕ 취소</button>
-                  </div>
+{/* 일기 작성 모달 */}
+{fullEditDiary && (
+  <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
+    <div className="flex justify-between items-center pb-3 border-b">
+      <h3 className="font-black text-lg text-slate-800">📷 포토 일기 작성</h3>
+      <button onClick={() => setFullEditDiary(null)} className="text-slate-400 font-bold">✕ 취소</button>
+    </div>
 
-                  <input type="text" placeholder="일기 제목 입력" value={fullEditDiary.title} onChange={e => setFullEditDiary({...fullEditDiary, title: e.target.value})} className="w-full p-3 border rounded-xl font-bold text-base" />
+    {/* N일차 및 날짜(YY.MM.DD) 선택 섹션 */}
+    <div className="flex items-center gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs font-bold">
+      <span className="text-slate-600">📅 여행일:</span>{/* 일기 작성 모달 내부 드롭다운 수정 */}
+<select 
+  value={fullEditDiary.day} 
+  onChange={(e) => {
+    const newDay = Number(e.target.value);
+    const newDateStr = getFormattedDateForDay(selectedCountry?.startDate, newDay);
+    setFullEditDiary({ ...fullEditDiary, day: newDay, createdDate: newDateStr });
+  }}
+  className="p-2 border rounded-xl bg-white font-bold text-indigo-700"
+>
+// 올바른 수정:
+  {Array.from({ 
+    length: selectedCountry ? calculateTotalDays(selectedCountry.startDate, selectedCountry.endDate) : 1 
+  }, (_, i) => i + 1).map(d => (
+    <option key={d} value={d}>
+      {d}일차 ({getFormattedDateForDay(selectedCountry?.startDate, d)})
+    </option>
+  ))}
 
-                  <div className="bg-indigo-50 p-3 rounded-2xl border border-indigo-100 flex items-center justify-between">
-                    <span className="font-bold text-xs text-indigo-900">🖼️ 다중 사진 추가</span>
-                    <label className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold cursor-pointer">
-                      사진 선택
-                      <input type="file" accept="image/*" multiple onChange={handleMultipleDiaryImageUpload} className="hidden" />
-                    </label>
-                  </div>
 
-                  <div className="space-y-4">
-                    {fullEditDiary.blocks.map((block, bIdx) => (
-                      <div key={block.id} className="bg-slate-50 p-4 rounded-2xl border space-y-3">
-                        <div className="flex justify-between items-center border-b pb-2">
-                          <span className="font-bold text-xs text-indigo-600">블록 #{bIdx + 1}</span>
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => handleMoveDiaryBlock(bIdx, -1)} className="p-1 text-xs font-bold">▲</button>
-                            <button onClick={() => handleMoveDiaryBlock(bIdx, 1)} className="p-1 text-xs font-bold">▼</button>
-                            <button onClick={() => handleDeleteDiaryBlock(block.id)} className="p-1 text-xs font-bold text-red-500 ml-2">🗑️ 삭제</button>
-                          </div>
-                        </div>
-                        <input type="file" accept="image/*" onChange={e => handleCompressedFileUpload(e.target.files[0], (name, base64) => handleUpdateDiaryBlock(block.id, 'image', base64))} className="w-full text-xs p-1.5 border rounded-xl bg-white" />
-                        {block.image && <img src={block.image} className="w-full h-36 object-cover rounded-xl mt-2" />}
-                        <textarea placeholder="일기 내용 작성..." value={block.text} onChange={e => handleUpdateDiaryBlock(block.id, 'text', e.target.value)} className="w-full p-3 border rounded-xl text-xs h-24 bg-white" />
-                      </div>
-                    ))}
-                  </div>
+</select>
+      <span className="text-indigo-900 font-black">
+        ({fullEditDiary.createdDate || getFormattedDateForDay(selectedCountry?.startDate, fullEditDiary.day)})
+      </span>
+    </div>
 
-                  <button onClick={handleAddDiaryBlock} className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold border">+ 블록 추가</button>
-                  <button onClick={handleSaveDiarySubmit} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl text-sm font-bold">저장 완료</button>
-                </div>
-              )}
+    <input type="text" placeholder="일기 제목 입력" value={fullEditDiary.title} onChange={e => setFullEditDiary({...fullEditDiary, title: e.target.value})} className="w-full p-3 border rounded-xl font-bold text-base" />
 
-              {/* 📷 일기 상세 보기 모달 */}
+    <div className="bg-indigo-50 p-3 rounded-2xl border border-indigo-100 flex items-center justify-between">
+      <span className="font-bold text-xs text-indigo-900">🖼️ 다중 사진 추가</span>
+      <label className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold cursor-pointer">
+        사진 선택
+        <input type="file" accept="image/*" multiple onChange={handleMultipleDiaryImageUpload} className="hidden" />
+      </label>
+    </div>
+
+    <div className="space-y-4">
+      {fullEditDiary.blocks.map((block, bIdx) => (
+        <div key={block.id} className="bg-slate-50 p-4 rounded-2xl border space-y-3">
+          <div className="flex justify-between items-center border-b pb-2">
+            <span className="font-bold text-xs text-indigo-600">블록 #{bIdx + 1}</span>
+            <div className="flex items-center gap-1">
+              <button onClick={() => handleMoveDiaryBlock(bIdx, -1)} className="p-1 text-xs font-bold">▲</button>
+              <button onClick={() => handleMoveDiaryBlock(bIdx, 1)} className="p-1 text-xs font-bold">▼</button>
+              <button onClick={() => handleDeleteDiaryBlock(block.id)} className="p-1 text-xs font-bold text-red-500 ml-2">🗑️ 삭제</button>
+            </div>
+          </div>
+          <input type="file" accept="image/*" onChange={e => handleCompressedFileUpload(e.target.files[0], (name, base64) => handleUpdateDiaryBlock(block.id, 'image', base64))} className="w-full text-xs p-1.5 border rounded-xl bg-white" />
+          {block.image && <img src={block.image} className="w-full h-36 object-cover rounded-xl mt-2" />}
+          <textarea placeholder="일기 내용 작성..." value={block.text} onChange={e => handleUpdateDiaryBlock(block.id, 'text', e.target.value)} className="w-full p-3 border rounded-xl text-xs h-24 bg-white" />
+        </div>
+      ))}
+    </div>
+
+    <button onClick={handleAddDiaryBlock} className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold border">+ 블록 추가</button>
+    <button onClick={() => handleSaveDiarySubmit(false)} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl text-sm font-bold">저장 완료</button>
+  </div>
+)}
+
+{/* ⚠️ 동일 일차 작성 중복 확인 팝업 */}
+{diaryConflictPopup && (
+  <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4">
+    <div className="bg-white rounded-3xl p-5 w-full max-w-xs space-y-4 shadow-2xl">
+      <h4 className="font-black text-amber-600 text-base border-b pb-2">⚠️ 동일 일차 일기 감지</h4>
+      <p className="text-xs text-slate-700 leading-relaxed">
+        이미 <b>{fullEditDiary?.day}일차 ({diaryConflictPopup.existingDiary.createdDate})</b> 일기가 작성되어 있습니다.<br/><br/>
+        해당 일차에 일기를 추가로 덧붙이시겠습니까?
+      </p>
+      
+      <div className="space-y-2 pt-1">
+        <button 
+          onClick={() => handleSaveDiarySubmit(true)} 
+          className="w-full py-2.5 bg-indigo-600 text-white text-xs font-bold rounded-xl shadow"
+        >
+          ➕ 기존 {fullEditDiary?.day}일차 일기에 덧붙이기
+        </button>
+        <button 
+          onClick={() => {
+            alert("일자를 다시 확인해 주세요!");
+            setDiaryConflictPopup(null);
+          }} 
+          className="w-full py-2.5 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl border border-slate-200"
+        >
+          🔄 일자 다시 확인하기 (취소)
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* 📷 일기 상세 보기 모달 */}
               {fullDiaryModal && (
                 <div className="fixed inset-0 bg-white z-50 flex flex-col p-5 overflow-y-auto space-y-4">
                   <div className="flex justify-between items-center pb-3 border-b">
@@ -2856,11 +3161,13 @@
 
             </div>
           )}
+
         </div>
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<TravelApp />);
-  </script>
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<TravelApp />);
+</script>
 </body>
 </html>
